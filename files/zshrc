@@ -1,0 +1,95 @@
+# ~/.zshrc — devenv shell configuration
+
+# ── History ────────────────────────────────────────────────────────────────────
+HISTFILE=~/.zsh_history
+HISTSIZE=100000
+SAVEHIST=100000
+setopt HIST_IGNORE_DUPS       # don't store consecutive duplicates
+setopt HIST_IGNORE_SPACE      # don't store lines starting with a space
+setopt SHARE_HISTORY          # share history across sessions (atuin takes over live sync)
+setopt EXTENDED_HISTORY       # save timestamp + duration
+
+# ── Completion ─────────────────────────────────────────────────────────────────
+autoload -Uz compinit
+compinit -d ~/.cache/zcompdump
+
+# Case-insensitive tab completion
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+# Menu-style selection
+zstyle ':completion:*' menu select
+# Group completions by type
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*:descriptions' format '%B%d%b'
+# Use colours in completion list
+zstyle ':completion:*:default' list-colors "${(s.:.)LS_COLORS}"
+
+# gh completions
+if command -v gh &>/dev/null; then
+  eval "$(gh completion -s zsh)"
+fi
+
+# uv completions
+if command -v uv &>/dev/null; then
+  eval "$(uv generate-shell-completion zsh)"
+fi
+
+# ── Key bindings ───────────────────────────────────────────────────────────────
+bindkey -e                        # emacs key bindings (Ctrl-A/E, etc.)
+bindkey '^[[A' history-search-backward   # Up arrow: history prefix search
+bindkey '^[[B' history-search-forward    # Down arrow
+
+# ── Aliases: eza (ls replacement) ─────────────────────────────────────────────
+# if command -v eza &>/dev/null; then
+#   alias ls='eza --icons --group-directories-first'
+#   alias ll='eza --icons --group-directories-first -l --git'
+#   alias la='eza --icons --group-directories-first -la --git'
+#   alias lt='eza --icons --tree --level=2'
+#   alias lta='eza --icons --tree --level=2 -a'
+# fi
+
+# ── Aliases: misc ─────────────────────────────────────────────────────────────
+# alias grep='grep --color=auto'
+# alias diff='diff --color=auto'
+# alias ip='ip --color=auto'
+
+# git shortcuts
+# alias g='git'
+# alias gs='git status'
+# alias gd='git diff'
+# alias gl='git log --oneline --graph --decorate'
+
+# tmux
+# alias t='tmux'
+# alias ta='tmux attach -t'
+# alias tn='tmux new-session -s'
+
+# ── Environment ────────────────────────────────────────────────────────────────
+export EDITOR='vim'
+export PAGER='less'
+export LESS='-RFX'
+
+# Prefer XDG dirs
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+
+# ── PATH additions ─────────────────────────────────────────────────────────────
+# User-local binaries (pip install --user, etc.)
+export PATH="$HOME/.local/bin:$PATH"
+
+# ── Tool initialisation (ORDER MATTERS: fzf → atuin → starship) ───────────────
+
+# 1. fzf — fuzzy finder shell integration
+if command -v fzf &>/dev/null; then
+  source <(fzf --zsh)
+fi
+
+# 2. atuin — shell history sync + search (replaces Ctrl-R)
+if command -v atuin &>/dev/null; then
+  eval "$(atuin init zsh)"
+fi
+
+# 3. starship — prompt (must be last)
+if command -v starship &>/dev/null; then
+  eval "$(starship init zsh)"
+fi

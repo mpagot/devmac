@@ -1,5 +1,6 @@
 ---
-- hosts: all
+- name: Provision dev VM
+  hosts: all
   become: true
   vars_files:
     - vars/packages.yml
@@ -18,10 +19,10 @@
         - packages
 
     - name: Update all packages to the latest version
-      ansible.builtin.zypper:
+      community.general.zypper:
         name: "*"
         state: latest
-        update_cache: yes
+        update_cache: true
       tags:
         - update
 
@@ -45,3 +46,40 @@
       with_items: "{{ private_ssh_keys_to_upload }}"
       tags:
         - ssh_keys
+
+    - name: Set default shell to zsh for {{ ansible_user }}
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        shell: /usr/bin/zsh
+      tags:
+        - shell
+
+    - name: Ensure ~/.config directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - dotfiles
+
+    - name: Deploy starship.toml
+      ansible.builtin.copy:
+        src: files/starship.toml
+        dest: "/home/{{ ansible_user }}/.config/starship.toml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - dotfiles
+
+    - name: Deploy .zshrc
+      ansible.builtin.copy:
+        src: files/zshrc
+        dest: "/home/{{ ansible_user }}/.zshrc"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - dotfiles

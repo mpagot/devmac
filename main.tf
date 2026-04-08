@@ -246,10 +246,11 @@ resource "libvirt_domain" "domain" {
       echo "VM IP address: $IP"
 
       {
-        echo "[dev-vm]"
+        echo "[dev_vm]"
         echo "$IP ansible_host=$IP ansible_user=${var.username} ansible_ssh_private_key_file=\"${var.ansible_private_key_path}\""
         echo ""
-        echo "[dev-vm:vars]"
+        echo "[dev_vm:vars]"
+        echo "ansible_python_interpreter=/usr/bin/python3.13"
         echo "private_ssh_keys_to_upload=${jsonencode(var.private_ssh_keys_to_upload)}"
       } > inventory.ini
     EOT

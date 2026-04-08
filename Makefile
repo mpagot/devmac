@@ -3,7 +3,7 @@ UV         ?= uv
 KVM_HOST   ?= root@qesap-kvm1.qe.prg3.suse.org
 VM_NAME    ?= my-dev-vm
 
-.PHONY: all validate format apply destroy list galaxy-install provision clean-domain clean-state clean
+.PHONY: all validate format apply destroy list galaxy-install provision lint clean-domain clean-state clean
 
 all: format validate
 
@@ -27,6 +27,9 @@ galaxy-install:
 
 provision: galaxy-install
 	$(UV) run ansible-playbook -i inventory.ini playbook.yml
+
+lint:
+	$(UV) run ansible-lint playbook.yml
 
 # Remove a stale domain from the KVM host that tofu can't manage
 # (e.g. after a failed apply where define succeeded but start failed)

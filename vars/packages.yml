@@ -2,6 +2,9 @@
 favorite_packages:
   - git
   - zsh
+  - nushell
+  - fish
+  - helix
   - fzf
   - atuin
   - eza
@@ -9,3 +12,10 @@ favorite_packages:
   - lazygit
   - python313-uv
   - uv-zsh-completion
+  - python311
+  - python312
+  - python314
+  - gh
+  - gh-zsh-completion
+  - starship
+  - zoxide
