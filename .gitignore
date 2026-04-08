@@ -1,0 +1,26 @@
+# Terraform
+.terraform
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+*.tfvars
+
+# Python
+.venv
+
+# Generated files
+inventory.ini
+combustion.iso
+.cloudinit/
+.cloudinit.iso
+
+# Other
+*.log
+
+# Stale / unused artifacts
+.ignition.json
+inventory.tmpl
+main.py
+
+# Secrets
+.secret

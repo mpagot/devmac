@@ -1,0 +1,11 @@
+---
+favorite_packages:
+  - git
+  - zsh
+  - fzf
+  - atuin
+  - eza
+  - tmux
+  - lazygit
+  - python313-uv
+  - uv-zsh-completion

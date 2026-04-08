@@ -1,0 +1,47 @@
+---
+- hosts: all
+  become: true
+  vars_files:
+    - vars/packages.yml
+  tasks:
+    - name: Ping my hosts
+      ansible.builtin.ping:
+
+    - name: Gather facts
+      ansible.builtin.gather_facts:
+
+    - name: Install favorite packages
+      community.general.zypper:
+        name: "{{ favorite_packages }}"
+        state: present
+      tags:
+        - packages
+
+    - name: Update all packages to the latest version
+      ansible.builtin.zypper:
+        name: "*"
+        state: latest
+        update_cache: yes
+      tags:
+        - update
+
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      tags:
+        - ssh_keys
+
+    - name: Upload private SSH keys for jumphost access
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/home/{{ ansible_user }}/.ssh/{{ item | basename }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      with_items: "{{ private_ssh_keys_to_upload }}"
+      tags:
+        - ssh_keys
