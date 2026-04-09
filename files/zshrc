@@ -39,24 +39,75 @@ bindkey '^[[A' history-search-backward   # Up arrow: history prefix search
 bindkey '^[[B' history-search-forward    # Down arrow
 
 # ── Aliases: eza (ls replacement) ─────────────────────────────────────────────
-# if command -v eza &>/dev/null; then
-#   alias ls='eza --icons --group-directories-first'
-#   alias ll='eza --icons --group-directories-first -l --git'
-#   alias la='eza --icons --group-directories-first -la --git'
-#   alias lt='eza --icons --tree --level=2'
-#   alias lta='eza --icons --tree --level=2 -a'
-# fi
+alias ll="eza -a --icons --group-directories-first --time-style=long-iso --octal-permissions --color=always -lhg -s modified --tree --level 1"
 
 # ── Aliases: misc ─────────────────────────────────────────────────────────────
 # alias grep='grep --color=auto'
 # alias diff='diff --color=auto'
 # alias ip='ip --color=auto'
 
-# git shortcuts
-# alias g='git'
-# alias gs='git status'
-# alias gd='git diff'
-# alias gl='git log --oneline --graph --decorate'
+# ── Git workflow aliases and functions ─────────────────────────────────────────
+
+# Helper: detect default branch (master or main)
+_git_default_branch() {
+  if git show-ref --verify --quiet refs/heads/main; then
+    echo "main"
+  else
+    echo "master"
+  fi
+}
+
+# Sync fork via gh repo sync (auto-detects master/main)
+ghsync() {
+  local branch=$(_git_default_branch)
+  git checkout "$branch" && \
+    gh repo sync mpagot/$(basename $(git rev-parse --show-toplevel)) -b "$branch" && \
+    git pull
+}
+
+# Sync fork via fetch upstream (auto-detects master/main)
+gfup() {
+  local branch=$(_git_default_branch)
+  git checkout "$branch" && \
+    git fetch upstream && \
+    git merge "upstream/$branch" && \
+    git push && \
+    git pull
+}
+
+# Checkout branch with fzf
+gcof() {
+  local BRANCH="$(git for-each-ref --sort=-committerdate refs/heads/ --format='%(committerdate:iso8601) %(refname:short)' | fzf | cut -d ' ' -f 4)"
+  git checkout "$BRANCH"
+}
+
+# Git add with fzf (multi-select)
+gaf() {
+  git add $(git status | grep 'modified:' | sed 's/.*modified://' | fzf -m)
+}
+
+# Git diff with fzf (multi-select)
+gdf() {
+  git diff $(git status | grep 'modified:' | sed 's/.*modified://' | fzf -m)
+}
+
+# Git push set-upstream to current branch
+alias gpsu='git push --set-upstream origin $(git rev-parse --abbrev-ref HEAD)'
+
+# Git push force-with-lease to current branch
+alias gpfl='git push --force-with-lease origin $(git rev-parse --abbrev-ref HEAD)'
+
+# Look up your PR on the upstream repo for the current branch
+gh_pr() {
+  local MYGH_UP="$(git config --get remote.upstream.url)"
+  echo "MYGH_UP : ${MYGH_UP}"
+  local MYGH_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  echo "MYGH_BRANCH : ${MYGH_BRANCH}"
+  local MYGH_PR="$(GH_PAGER= gh pr -R ${MYGH_UP} --json 'number' -q '.[0].number' list -A mpagot -H ${MYGH_BRANCH} -s all)"
+  echo "This is PR: ${MYGH_PR}"
+  [[ -z "${MYGH_PR}" ]] && echo "No PR!!!"
+  GH_PAGER= gh pr -R ${MYGH_UP} view $1 ${MYGH_PR}
+}
 
 # tmux
 # alias t='tmux'
@@ -83,19 +134,24 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # asdf shims — nodejs LSPs (bash-language-server, yaml-language-server, prettier, ansible-language-server)
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
-# ── Tool initialisation (ORDER MATTERS: fzf → atuin → starship) ───────────────
+# ── Tool initialisation (ORDER MATTERS: fzf → zoxide → atuin → starship) ──────
 
 # 1. fzf — fuzzy finder shell integration
 if command -v fzf &>/dev/null; then
   source <(fzf --zsh)
 fi
 
-# 2. atuin — shell history sync + search (replaces Ctrl-R)
+# 2. zoxide — smart cd (provides z and zi commands)
+if command -v zoxide &>/dev/null; then
+  eval "$(zoxide init zsh)"
+fi
+
+# 3. atuin — shell history sync + search (replaces Ctrl-R)
 if command -v atuin &>/dev/null; then
   eval "$(atuin init zsh)"
 fi
 
-# 3. starship — prompt (must be last)
+# 4. starship — prompt (must be last)
 if command -v starship &>/dev/null; then
   eval "$(starship init zsh)"
 fi
