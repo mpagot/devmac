@@ -595,10 +595,10 @@
       become: true
       become_user: "{{ ansible_user }}"
       loop:
-        - { name: user.name, value: "{{ git_user_name }}" }
-        - { name: user.email, value: "{{ git_user_email }}" }
-        - { name: core.editor, value: "{{ git_editor }}" }
-        - { name: init.defaultBranch, value: "{{ git_default_branch }}" }
+        - {name: user.name, value: "{{ git_user_name }}"}
+        - {name: user.email, value: "{{ git_user_email }}"}
+        - {name: core.editor, value: "{{ git_editor }}"}
+        - {name: init.defaultBranch, value: "{{ git_default_branch }}"}
         # - { name: pull.rebase, value: "true" }
         # - { name: push.autoSetupRemote, value: "true" }
         # - { name: fetch.prune, value: "true" }
@@ -610,3 +610,54 @@
       tags:
         - gh
         - git_config
+
+    # ── tmux configuration ─────────────────────────────────────────────────────
+    # TPM and plugins are cloned via ansible.builtin.git (idempotent; avoids
+    # running a headless TPM install script).  The catppuccin/tmux repo uses the
+    # last path segment as the clone directory name ("tmux"), which is what TPM
+    # expects when the plugin is declared as 'catppuccin/tmux' in tmux.conf.
+
+    - name: Clone TPM (Tmux Plugin Manager)
+      ansible.builtin.git:
+        repo: https://github.com/tmux-plugins/tpm.git
+        dest: "/home/{{ ansible_user }}/.tmux/plugins/tpm"
+        version: master
+        update: true
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - tmux
+
+    - name: Clone tmux-sensible plugin
+      ansible.builtin.git:
+        repo: https://github.com/tmux-plugins/tmux-sensible.git
+        dest: "/home/{{ ansible_user }}/.tmux/plugins/tmux-sensible"
+        version: master
+        update: true
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - tmux
+
+    - name: Clone catppuccin/tmux plugin
+      ansible.builtin.git:
+        repo: https://github.com/catppuccin/tmux.git
+        dest: "/home/{{ ansible_user }}/.tmux/plugins/tmux"
+        version: main
+        update: true
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - tmux
+
+    - name: Deploy tmux configuration
+      ansible.builtin.copy:
+        src: files/tmux.conf
+        dest: "/home/{{ ansible_user }}/.tmux.conf"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - tmux

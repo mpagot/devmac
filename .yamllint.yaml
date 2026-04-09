@@ -1,0 +1,18 @@
+extends: default
+
+rules:
+  # Long lines are common in Ansible tasks (URLs, filters, Jinja2 expressions)
+  # and are better left to the author's judgement than enforced by a linter.
+  line-length: disable
+
+  # The five rules below are required by ansible-lint, which embeds yamllint
+  # internally and refuses to run in fix mode unless these exact values are set.
+  # See https://docs.ansible.com/projects/lint/rules/yaml/ for the rationale.
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

@@ -346,12 +346,14 @@ source = { virtual = "." }
 dependencies = [
     { name = "ansible-core" },
     { name = "ansible-lint" },
+    { name = "yamllint" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "ansible-core", specifier = ">=2.20.3" },
     { name = "ansible-lint" },
+    { name = "yamllint" },
 ]
 
 [[package]]
