@@ -1,0 +1,17 @@
+---
+asdf_plugins:
+  - name: nodejs
+    url: https://github.com/asdf-vm/asdf-nodejs.git
+    versions:
+      - version: "latest:24"
+        installed_version_pattern: "24\\."
+        global: true
+
+  - name: zig
+    url: https://github.com/asdf-community/asdf-zig.git
+    versions:
+      - version: "0.14.0"
+        installed_version_pattern: "0\\.14\\.0"
+      - version: "0.15.2"
+        installed_version_pattern: "0\\.15\\.2"
+        global: true

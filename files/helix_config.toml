@@ -1,0 +1,5 @@
+[editor.whitespace]
+render = "all"
+
+[editor.file-picker]
+hidden = false

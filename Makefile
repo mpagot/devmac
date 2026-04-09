@@ -2,8 +2,9 @@ TOFU       ?= tofu
 UV         ?= uv
 KVM_HOST   ?= root@qesap-kvm1.qe.prg3.suse.org
 VM_NAME    ?= my-dev-vm
+VERBOSITY  ?=
 
-.PHONY: all validate format apply destroy list galaxy-install provision lint clean-domain clean-state clean
+.PHONY: all validate format apply destroy list get-ip update-inventory galaxy-install provision lint clean-domain clean-state clean
 
 all: format validate
 
@@ -22,11 +23,24 @@ destroy:
 list:
 	ssh $(KVM_HOST) "virsh list --all"
 
+get-ip:
+	@ssh $(KVM_HOST) \
+	  "virsh domifaddr '$(VM_NAME)' --source agent 2>/dev/null" \
+	  | grep -oP '\d+\.\d+\.\d+\.\d+' | grep -v '^127\.' | head -1
+
+update-inventory:
+	@IP=$$(ssh $(KVM_HOST) \
+	  "virsh domifaddr '$(VM_NAME)' --source agent 2>/dev/null" \
+	  | grep -oP '\d+\.\d+\.\d+\.\d+' | grep -v '^127\.' | head -1) && \
+	  [ -n "$$IP" ] || (echo "ERROR: could not get IP for $(VM_NAME)" >&2 && exit 1) && \
+	  sed -i "s/[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+/$$IP/g" inventory.ini && \
+	  echo "inventory.ini updated: $$IP"
+
 galaxy-install:
 	$(UV) run ansible-galaxy collection install -r requirements.yml
 
 provision: galaxy-install
-	$(UV) run ansible-playbook -i inventory.ini playbook.yml
+	$(UV) run ansible-playbook -i inventory.ini playbook.yml $(VERBOSITY)
 
 lint:
 	$(UV) run ansible-lint playbook.yml

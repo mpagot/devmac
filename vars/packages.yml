@@ -1,7 +1,7 @@
 ---
 favorite_packages:
+  - asdf                # asdf              — manages nodejs (for npm-based LSPs)
   - git
-  - zsh
   - nushell
   - fish
   - helix
@@ -9,6 +9,7 @@ favorite_packages:
   - atuin
   - eza
   - tmux
+  - zellij
   - lazygit
   - python313-uv
   - uv-zsh-completion
@@ -19,3 +20,24 @@ favorite_packages:
   - gh-zsh-completion
   - starship
   - zoxide
+  - zsh
+
+# ── Helix editor: language server & tool dependencies ─────────────────────────
+helix_zypper_packages:
+  - clang-tools         # provides clangd   — LSP for c, cpp, opencl
+  - lldb                # provides lldb-dap — debug adapter for c, cpp, rust, odin
+  - python313-ruff      # ruff              — LSP for python
+  - taplo               # taplo             — LSP for toml
+  - markdown-oxide      # markdown-oxide    — LSP for markdown
+  - zls                 # zls               — LSP for zig
+  - rustup              # rustup            — installs rust-analyzer component
+  - python313-python-lsp-server  # pylsp   — LSP for python, snakemake
+  - vale                # vale              — prose linter (required by vale-ls)
+  - unzip               # unzip            — required by ansible.builtin.unarchive for .zip/.vsix
+
+# ── npm-based LSPs installed globally via asdf-managed nodejs ─────────────────
+helix_npm_packages:
+  - bash-language-server
+  - yaml-language-server
+  - prettier
+  - "@ansible/ansible-language-server"

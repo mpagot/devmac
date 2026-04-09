@@ -1,0 +1,22 @@
+---
+# ── gh authentication ──────────────────────────────────────────────────────────
+# PAT is stored in .secret/gh_pat (plain text, gitignored, mode 0600).
+# Never commit .secret/ to version control.
+gh_pat: "{{ lookup('file', '.secret/gh_pat') }}"
+
+# ── gh config.yml settings ────────────────────────────────────────────────────
+gh_git_protocol: https
+gh_editor: hx
+
+# ── gh extensions ─────────────────────────────────────────────────────────────
+gh_extensions:
+  - name: dash
+    repo: dlvhdr/gh-dash
+  - name: grep
+    repo: k1LoW/gh-grep
+
+# ── git global config ─────────────────────────────────────────────────────────
+git_user_name: "Michele Pagot"
+git_user_email: "mpagot@suse.com"
+git_editor: hx
+git_default_branch: main

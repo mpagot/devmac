@@ -76,6 +76,12 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 # ── PATH additions ─────────────────────────────────────────────────────────────
 # User-local binaries (pip install --user, etc.)
 export PATH="$HOME/.local/bin:$PATH"
+# ~/bin — standalone LSP/tool binaries (marksman, vale-ls, perlnavigator, terraform-ls, codelldb, …)
+export PATH="$HOME/bin:$PATH"
+# Cargo — rust-analyzer and other Rust-installed tools
+export PATH="$HOME/.cargo/bin:$PATH"
+# asdf shims — nodejs LSPs (bash-language-server, yaml-language-server, prettier, ansible-language-server)
+export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 
 # ── Tool initialisation (ORDER MATTERS: fzf → atuin → starship) ───────────────
 

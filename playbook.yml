@@ -4,6 +4,30 @@
   become: true
   vars_files:
     - vars/packages.yml
+    - vars/helix_github_binaries.yml
+    - vars/gh.yml
+    - vars/asdf_plugins.yml
+
+  pre_tasks:
+    - name: Verify GitHub PAT secret file exists on controller
+      ansible.builtin.stat:
+        path: ".secret/gh_pat"
+      register: gh_pat_file
+      delegate_to: localhost
+      become: false
+      tags:
+        - always
+
+    - name: Fail early if GitHub PAT secret is missing
+      ansible.builtin.fail:
+        msg: >
+          The file .secret/gh_pat is missing!
+          Please create it with your GitHub Personal Access Token.
+          Example: echo "ghp_your_token_here" > .secret/gh_pat
+      when: not gh_pat_file.stat.exists
+      tags:
+        - always
+
   tasks:
     - name: Ping my hosts
       ansible.builtin.ping:
@@ -83,3 +107,506 @@
         mode: '0644'
       tags:
         - dotfiles
+
+    # ── Atuin: local-only shell history ────────────────────────────────────────
+    # No sync account; history is bootstrapped from the controller's zsh history.
+    # Re-running is safe: atuin import deduplicates entries.
+
+    - name: Ensure atuin config directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/atuin"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - atuin
+
+    - name: Deploy atuin config (sync disabled)
+      ansible.builtin.copy:
+        src: files/atuin_config.toml
+        dest: "/home/{{ ansible_user }}/.config/atuin/config.toml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - atuin
+
+    - name: Upload controller zsh history for atuin import
+      ansible.builtin.copy:
+        src: "{{ local_zsh_history_file | default('~/.zsh_history') }}"
+        dest: "/home/{{ ansible_user }}/.zsh_history_import"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags:
+        - atuin
+
+    - name: Import controller zsh history into atuin
+      ansible.builtin.command:
+        cmd: atuin import zsh
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        HISTFILE: "/home/{{ ansible_user }}/.zsh_history_import"
+      changed_when: true
+      tags:
+        - atuin
+
+    - name: Remove imported history staging file
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.zsh_history_import"
+        state: absent
+      tags:
+        - atuin
+
+    # ── Helix editor: language server & tool support ───────────────────────────
+    # Brings `hx --health` on the remote VM to parity with the local setup.
+    # Install order: zypper packages → GitHub binaries → rustup → asdf (plugins + versions) → npm LSPs → config
+    # Note: zig (formatter) is managed via asdf, not zypper.
+
+    - name: Install Helix LSP dependencies via zypper
+      community.general.zypper:
+        name: "{{ helix_zypper_packages }}"
+        state: present
+      tags:
+        - helix
+
+    # ── ~/bin — home for standalone LSP binaries ───────────────────────────────
+
+    - name: Ensure ~/bin directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/bin"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - helix
+
+    # ── GitHub release binaries: Idempotent Installation ───────────────────────
+    # Version sentinels in ~/bin avoid re-downloading existing tools.
+
+    - name: Read installed version sentinels for GitHub binaries
+      ansible.builtin.command:
+        cmd: "cat /home/{{ ansible_user }}/bin/.{{ item.dest }}.version"
+      register: helix_version_check
+      loop: "{{ helix_github_binaries }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - helix
+
+    - name: Identify GitHub binaries that need install or update
+      ansible.builtin.set_fact:
+        helix_binaries_to_update: >-
+          {{ (helix_binaries_to_update | default([])) +
+             ([] if (helix_version_check.results[item | int].rc == 0 and
+                     helix_version_check.results[item | int].stdout.strip()
+                     == helix_github_binaries[item | int].version)
+                 else [helix_github_binaries[item | int]]) }}
+      loop: "{{ range(helix_github_binaries | length) | list }}"
+      loop_control:
+        label: "{{ helix_github_binaries[item | int].name }}"
+      tags:
+        - helix
+
+    # ── GitHub release binaries (direct, no archive) ───────────────────────────
+
+    - name: Download standalone LSP binaries from GitHub
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "/home/{{ ansible_user }}/bin/{{ item.dest }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+        force: true
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', false) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    # ── GitHub release binaries (archives: zip / vsix) ─────────────────────────
+    # Each archive is downloaded to /tmp, extracted there, then the single binary
+    # is copied to ~/bin.
+
+    - name: Download archived LSP releases to /tmp
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "/tmp/helix_{{ item.name }}_archive"
+        mode: '0644'
+        force: true
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Create per-binary extraction directories in /tmp
+      ansible.builtin.file:
+        path: "/tmp/helix_{{ item.name }}_extract"
+        state: directory
+        mode: '0755'
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Extract archived LSP releases
+      ansible.builtin.unarchive:
+        src: "/tmp/helix_{{ item.name }}_archive"
+        dest: "/tmp/helix_{{ item.name }}_extract"
+        remote_src: true
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Install extracted LSP binaries to ~/bin
+      ansible.builtin.copy:
+        src: "/tmp/helix_{{ item.name }}_extract/{{ item.archive_path }}"
+        dest: "/home/{{ ansible_user }}/bin/{{ item.dest }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+        remote_src: true
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Cleanup temporary archive files
+      ansible.builtin.file:
+        path: "/tmp/helix_{{ item.name }}_archive"
+        state: absent
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Cleanup temporary extraction directories
+      ansible.builtin.file:
+        path: "/tmp/helix_{{ item.name }}_extract"
+        state: absent
+      loop: "{{ helix_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    - name: Record installed version for GitHub binaries
+      ansible.builtin.copy:
+        content: "{{ item.version }}"
+        dest: "/home/{{ ansible_user }}/bin/.{{ item.dest }}.version"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      loop: "{{ helix_binaries_to_update }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - helix
+
+    # ── rust-analyzer via rustup ───────────────────────────────────────────────
+
+    - name: Install stable Rust toolchain via rustup
+      ansible.builtin.command:
+        cmd: rustup toolchain install stable --no-self-update
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        RUSTUP_HOME: "/home/{{ ansible_user }}/.rustup"
+        CARGO_HOME: "/home/{{ ansible_user }}/.cargo"
+      register: rustup_toolchain
+      changed_when: "'installed' in rustup_toolchain.stdout"
+      tags:
+        - helix
+
+    - name: Add rust-analyzer component via rustup
+      ansible.builtin.command:
+        cmd: rustup component add rust-analyzer
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        RUSTUP_HOME: "/home/{{ ansible_user }}/.rustup"
+        CARGO_HOME: "/home/{{ ansible_user }}/.cargo"
+      register: rustup_component
+      changed_when: "'installing' in rustup_component.stdout"
+      tags:
+        - helix
+
+    # ── asdf: plugin management ────────────────────────────────────────────────
+    # asdf is installed via zypper (see favorite_packages).
+    # Plugin list and versions are driven by vars/asdf_plugins.yml.
+    # Each plugin entry supports multiple versions; one version per plugin is
+    # flagged global: true and set as the home-wide default via `asdf set -u`.
+
+    - name: Add asdf plugins
+      ansible.builtin.command:
+        cmd: "asdf plugin add {{ item.name }} {{ item.url }}"
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        ASDF_DATA_DIR: "/home/{{ ansible_user }}/.asdf"
+        PATH: "/home/{{ ansible_user }}/.asdf/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      loop: "{{ asdf_plugins }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: asdf_plugin_add
+      changed_when: asdf_plugin_add.rc == 0
+      failed_when: asdf_plugin_add.rc != 0 and 'already added' not in asdf_plugin_add.stderr
+      tags:
+        - asdf
+
+    - name: Install asdf plugin versions
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          if ! asdf list {{ item.0.name }} 2>/dev/null | grep -qE '{{ item.1.installed_version_pattern }}'; then
+            asdf install {{ item.0.name }} {{ item.1.version }}
+          else
+            echo "already installed"
+          fi
+        executable: /bin/bash
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        ASDF_DATA_DIR: "/home/{{ ansible_user }}/.asdf"
+        PATH: "/home/{{ ansible_user }}/.asdf/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      loop: "{{ asdf_plugins | subelements('versions') }}"
+      loop_control:
+        label: "{{ item.0.name }} {{ item.1.version }}"
+      register: asdf_install
+      changed_when: "'already installed' not in asdf_install.stdout"
+      tags:
+        - asdf
+
+    - name: Set asdf global default versions
+      ansible.builtin.command:
+        cmd: "asdf set -u {{ item.0.name }} {{ item.1.version }}"
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        ASDF_DATA_DIR: "/home/{{ ansible_user }}/.asdf"
+        PATH: "/home/{{ ansible_user }}/.asdf/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      loop: "{{ asdf_plugins | subelements('versions') }}"
+      loop_control:
+        label: "{{ item.0.name }} {{ item.1.version }}"
+      when: item.1.global | default(false)
+      changed_when: false
+      tags:
+        - asdf
+
+    # ── npm-based LSPs via asdf-managed nodejs ─────────────────────────────────
+    # Depends on the asdf section above having set up nodejs.
+    # After this block, bash-language-server, yaml-language-server, prettier, and
+    # ansible-language-server will be available as shims in ~/.asdf/shims/.
+
+    - name: Install npm-based LSPs
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          npm install -g {{ helix_npm_packages | join(' ') }}
+          asdf reshim nodejs
+        executable: /bin/bash
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        ASDF_DATA_DIR: "/home/{{ ansible_user }}/.asdf"
+        PATH: "/home/{{ ansible_user }}/.asdf/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      register: npm_lsp_install
+      changed_when: npm_lsp_install.rc == 0
+      tags:
+        - helix
+
+    # ── Helix configuration files ──────────────────────────────────────────────
+
+    - name: Ensure ~/.config/helix directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/helix"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - helix
+
+    - name: Deploy Helix editor config
+      ansible.builtin.copy:
+        src: files/helix_config.toml
+        dest: "/home/{{ ansible_user }}/.config/helix/config.toml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - helix
+
+    - name: Deploy Helix language server config
+      ansible.builtin.copy:
+        src: files/helix_languages.toml
+        dest: "/home/{{ ansible_user }}/.config/helix/languages.toml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - helix
+
+    # ── gh CLI: authentication, configuration, extensions ─────────────────────
+    # After this block the user can SSH into the machine and use gh immediately
+    # without any manual login or browser interaction.
+    #
+    # Prerequisites on the Ansible controller:
+    #   .secret/gh_pat  — plain text GitHub PAT (gitignored, mode 0600)
+    #                     Required scopes: repo, read:org, gist
+    #
+    # Authentication strategy: gh auth login --with-token --insecure-storage
+    #   - Token is read from .secret/gh_pat on the controller via lookup('file')
+    #   - gh validates the token against the GitHub API at deploy time
+    #   - Token is stored in plain text in ~/.config/gh/hosts.yml (mode 0600)
+    #     because the system keyring is unavailable in headless SSH sessions
+    #   - no_log: true prevents the token from appearing in Ansible output
+
+    - name: Ensure ~/.config/gh directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/gh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - gh
+
+    - name: Deploy gh config.yml
+      ansible.builtin.template:
+        src: templates/gh_config.yml.j2
+        dest: "/home/{{ ansible_user }}/.config/gh/config.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - gh
+
+    - name: Authenticate gh with GitHub (headless, PAT via stdin)
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          echo '{{ gh_pat }}' | gh auth login --with-token --git-protocol https --insecure-storage
+        executable: /bin/bash
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      no_log: true
+      changed_when: false
+      tags:
+        - gh
+
+    - name: Configure gh as git credential helper (gh auth setup-git)
+      ansible.builtin.command:
+        cmd: gh auth setup-git
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      changed_when: false
+      tags:
+        - gh
+
+    # ── gh extensions ──────────────────────────────────────────────────────────
+    # Idempotent: the creates: argument skips install if the extension directory
+    # already exists under ~/.local/share/gh/extensions/gh-<name>/.
+
+    - name: Install gh extensions
+      ansible.builtin.command:
+        cmd: "gh extension install {{ item.repo }}"
+      args:
+        creates: "/home/{{ ansible_user }}/.local/share/gh/extensions/gh-{{ item.name }}"
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      loop: "{{ gh_extensions }}"
+      loop_control:
+        label: "{{ item.repo }}"
+      tags:
+        - gh
+        - gh_extensions
+
+    - name: Upgrade all gh extensions to latest
+      ansible.builtin.command:
+        cmd: gh extension upgrade --all
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      register: gh_ext_upgrade
+      changed_when: "'Upgraded' in gh_ext_upgrade.stdout"
+      tags:
+        - gh
+        - gh_extensions
+
+    - name: Ensure ~/.config/gh-dash directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/gh-dash"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - gh
+        - gh_extensions
+
+    - name: Deploy gh-dash config.yml
+      ansible.builtin.copy:
+        src: files/gh_dash_config.yml
+        dest: "/home/{{ ansible_user }}/.config/gh-dash/config.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      tags:
+        - gh
+        - gh_extensions
+
+    # ── git global configuration ───────────────────────────────────────────────
+    # Managed via community.general.git_config (idempotent: only writes when
+    # the current value differs from the desired value).
+
+    - name: Configure global git settings
+      community.general.git_config:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        scope: global
+      become: true
+      become_user: "{{ ansible_user }}"
+      loop:
+        - { name: user.name, value: "{{ git_user_name }}" }
+        - { name: user.email, value: "{{ git_user_email }}" }
+        - { name: core.editor, value: "{{ git_editor }}" }
+        - { name: init.defaultBranch, value: "{{ git_default_branch }}" }
+        # - { name: pull.rebase, value: "true" }
+        # - { name: push.autoSetupRemote, value: "true" }
+        # - { name: fetch.prune, value: "true" }
+        # - { name: diff.algorithm, value: histogram }
+        # - { name: rebase.autoSquash, value: "true" }
+        # - { name: rerere.enabled, value: "true" }
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - gh
+        - git_config

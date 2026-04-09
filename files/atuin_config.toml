@@ -1,0 +1,18 @@
+## Atuin — local-only configuration (no cloud sync)
+## Ref: https://docs.atuin.sh/configuration/config/
+
+# Never attempt to sync with any remote server
+auto_sync = false
+
+# ── Search ──────────────────────────────────────────────────────────────────────
+search_mode = "fuzzy"
+filter_mode = "global"
+
+# ── UI ──────────────────────────────────────────────────────────────────────────
+style = "compact"
+inline_height = 40
+show_preview = true
+enter_accept = true       # Enter executes immediately; Tab puts command in prompt
+
+# ── Safety ──────────────────────────────────────────────────────────────────────
+secrets_filter = true     # Auto-filter AWS keys, GitHub tokens, etc. from history

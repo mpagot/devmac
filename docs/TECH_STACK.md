@@ -18,6 +18,8 @@ environments.
 7. [IP Discovery on Bridged Networks](#7-ip-discovery-on-bridged-networks)
 8. [Post-Provisioning with Ansible](#8-post-provisioning-with-ansible)
 9. [Python Tooling: uv](#9-python-tooling-uv)
+10. [Shell History: Atuin (local-only)](#10-shell-history-atuin-local-only)
+11. [GitHub CLI (gh): Headless Authentication and Configuration](#11-github-cli-gh-headless-authentication-and-configuration)
 
 ---
 
@@ -36,6 +38,7 @@ Quick reference for all tool versions used in (or relevant to) this project.
 | **ansible-core** | 2.20.3 | 2.20.3 (2.20.4rc1 pre-release) | Managed via uv and pyproject.toml |
 | **Python** | 3.13 | 3.13.7 | Set via `.python-version`; managed by uv |
 | **uv** | 0.10.8 | 0.10.11 | Python package/project manager |
+| **gh** (GitHub CLI) | 2.89.0 | 2.89.0 | Installed via zypper; configured headlessly by Ansible |
 | **libvirt** (KVM host) | 8.0.0 | — | Remote host: openSUSE Leap 15.x |
 | **QEMU** (KVM host) | 6.2 | — | Remote host: openSUSE Leap 15.x |
 
@@ -642,6 +645,270 @@ uv is under very active development with frequent releases.
 
 ---
 
+## 11. GitHub CLI (gh): Headless Authentication and Configuration
+
+`gh` is the official GitHub CLI. It is installed on the developer VM via zypper
+(`gh` and `gh-zsh-completion` packages) and configured end-to-end by Ansible
+so that the user can SSH into the machine and immediately run `gh` commands —
+no browser, no manual login, no prompts.
+
+### The problem: interactive auth is not viable in Ansible
+
+`gh auth login` is designed for human interaction. Without extra flags it
+opens an OAuth device-flow in the browser, or at minimum prompts for
+choices. When `gh` detects that stdin is not a TTY (which is always true in
+an Ansible `shell` or `command` task), it sets `opts.Interactive = false` and
+will refuse to proceed unless it receives a token via stdin (`--with-token`)
+or a browser flow (`--web`). Neither browser flows nor interactive prompts are
+available in an SSH Ansible run.
+
+### Authentication strategy: `--with-token --insecure-storage`
+
+The chosen approach is:
+
+```bash
+echo "$GH_PAT" | gh auth login \
+  --with-token \
+  --git-protocol https \
+  --insecure-storage
+```
+
+Each flag serves a specific purpose:
+
+| Flag | Why |
+|---|---|
+| `--with-token` | Reads the PAT from stdin; bypasses all interactive prompts. The token is validated against the GitHub API before being stored — an expired or malformed token causes the task to fail immediately at deploy time rather than silently later. |
+| `--git-protocol https` | Sets the default git protocol for this host in `~/.config/gh/hosts.yml`. Without it `gh` defaults to HTTPS anyway, but specifying it makes the configuration explicit. |
+| `--insecure-storage` | Writes the PAT in **plain text** into `~/.config/gh/hosts.yml` instead of the system keyring. This is required because the system keyring (GNOME Keyring, KDE Wallet) is unavailable in headless SSH sessions. `gh auth status` on the local dev machine shows this directly: `X Timeout trying to log in to github.com account mpagot (keyring)` — the keyring daemon is not accessible over SSH. Without this flag, `gh auth login` would succeed during provisioning, but every subsequent `gh` call in a new SSH session would timeout trying to reach the keyring. |
+
+The Ansible task uses `no_log: true` to ensure the PAT never appears in
+Ansible output, logs, or `--verbose` traces:
+
+```yaml
+- name: Authenticate gh with GitHub (headless, PAT via stdin)
+  ansible.builtin.shell:
+    cmd: "echo '{{ gh_pat }}' | gh auth login --with-token --git-protocol https --insecure-storage"
+    executable: /bin/bash
+  become_user: "{{ ansible_user }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  no_log: true
+  changed_when: false
+```
+
+### Token sourcing: `lookup('file', '.secret/gh_pat')`
+
+The PAT is stored as a plain text file at `.secret/gh_pat` on the Ansible
+controller. The `.secret/` directory is gitignored (see `§8`). The var is
+defined in `vars/gh.yml`:
+
+```yaml
+gh_pat: "{{ lookup('file', '.secret/gh_pat') }}"
+```
+
+The `lookup('file', ...)` Jinja2 plugin reads the file from the **controller's**
+filesystem at playbook runtime — not from the remote host. The token never
+touches the remote disk except through the final write by `gh auth login`
+into `~/.config/gh/hosts.yml`.
+
+Before running the playbook for the first time, create the file manually:
+
+```bash
+echo "ghp_yourPersonalAccessToken" > .secret/gh_pat
+chmod 600 .secret/gh_pat
+```
+
+Required PAT scopes: `repo`, `read:org`, `gist`.
+
+### Credential file: `~/.config/gh/hosts.yml`
+
+`gh` stores per-host authentication state in `~/.config/gh/hosts.yml`. After
+`gh auth login --insecure-storage`, the file looks like:
+
+```yaml
+github.com:
+    user: mpagot
+    oauth_token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    git_protocol: https
+    users:
+        mpagot:
+            oauth_token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+The file is owned by the user and has mode `0600`. While the token is in plain
+text, the attack surface is the same as an SSH private key stored in `~/.ssh/` —
+it is protected by UNIX file permissions and is only readable by the owning user.
+
+When **secure storage** is used (the default, without `--insecure-storage`), the
+`oauth_token` key is absent from `hosts.yml` and the token lives in the system
+keyring under the service name `gh:github.com`. This is unavailable in SSH
+sessions, which is why we opt out.
+
+### Alternative: environment variable authentication
+
+`gh` also reads `GH_TOKEN` (highest priority) or `GITHUB_TOKEN` from the
+environment, with no credential file or login step required. When set, the env
+var takes precedence over `hosts.yml`. This is useful for one-shot CI runs
+but not for persistent developer machine setup: the token would need to be
+injected into every shell session (e.g., via `.zshrc`), exposing it via
+`env`, `ps`, and shell history in a less controlled way than a `0600` file.
+
+The `--with-token` + `hosts.yml` approach is preferred because the token is
+stored once, in a known location, with known permissions, and all `gh` commands
+find it automatically without any session-time environment setup.
+
+### git credential helper: `gh auth setup-git`
+
+After authentication, `gh auth setup-git` is run to make `git push`/`git pull`
+authenticate transparently via `gh`'s stored token, without prompting for a
+username or password.
+
+What it does internally: for each authenticated host, it writes **two**
+`credential.helper` entries to `~/.gitconfig` (via `git config --global`):
+
+```ini
+[credential "https://github.com"]
+    helper =
+    helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+    helper =
+    helper = !/usr/bin/gh auth git-credential
+```
+
+The **first entry is a blank value**. This is a git mechanism to **sever the
+credential helper chain**: git evaluates helpers in order and stops at the first
+one that returns a credential. A blank entry resets the list, discarding any
+previously configured global `credential.helper` (e.g., `store`, `cache`, or a
+OS-level helper) for this specific host. Without it, git would try the previous
+helper first and only fall through to `gh` if it failed.
+
+The **second entry** uses the `!` prefix, which tells git to run the value as an
+external command rather than treating it as a helper name. `gh auth git-credential`
+implements the git credential helper protocol: it accepts `get`, `store`, and
+`erase` operations on stdin/stdout, serving the token from `hosts.yml`.
+
+The Ansible task:
+
+```yaml
+- name: Configure gh as git credential helper (gh auth setup-git)
+  ansible.builtin.command:
+    cmd: gh auth setup-git
+  become_user: "{{ ansible_user }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  changed_when: false
+```
+
+`changed_when: false` is used because `gh auth setup-git` is idempotent in
+effect (running it twice produces the same `~/.gitconfig` entries) but the
+command always exits 0 with no output to distinguish a change from a no-op.
+
+### `gh` configuration file: `~/.config/gh/config.yml`
+
+Separate from authentication, `gh` reads its general configuration from
+`~/.config/gh/config.yml`. This file controls editor, pager, git protocol
+default, interactive prompt behavior, and command aliases. It is deployed by
+Ansible via `ansible.builtin.template` from `templates/gh_config.yml.j2`,
+which is parameterised by `vars/gh.yml`.
+
+Key settings deployed to the VM:
+
+| Key | Value | Notes |
+|---|---|---|
+| `git_protocol` | `https` | Protocol used for `gh repo clone`, `gh pr checkout`, etc. |
+| `editor` | `hx` | Editor opened by `gh issue create --editor`, `gh release create`, etc. |
+| `prompt` | `enabled` | Interactive prompting on (TTY sessions will benefit). |
+| `spinner` | `enabled` | Animated spinner during network operations. |
+| `aliases.co` | `pr checkout` | Built-in default alias kept. |
+
+The config directory path follows XDG: `${XDG_CONFIG_HOME:-$HOME/.config}/gh/`.
+The `GH_CONFIG_DIR` environment variable can override the entire directory if
+needed (e.g., for testing with a different identity), but this is not used in
+this project.
+
+### gh extensions
+
+Extensions are third-party `gh` subcommands, distributed as GitHub repositories.
+They are installed per-user into `~/.local/share/gh/extensions/gh-<name>/`.
+Two extensions are deployed on the developer VM:
+
+| Extension | Repository | Type | Purpose |
+|---|---|---|---|
+| `gh dash` | `dlvhdr/gh-dash` | Binary (precompiled) | TUI dashboard showing PRs and issues across repositories |
+| `gh grep` | `k1LoW/gh-grep` | Script (cloned repo) | Search code across GitHub repositories from the terminal |
+
+Extensions are defined in `vars/gh.yml` as a list of `{name, repo}` objects,
+following the same pattern as `vars/packages.yml` and `vars/helix_github_binaries.yml`.
+
+#### Installation idempotency
+
+`gh extension install` is **not natively idempotent**: if the extension is
+already installed, it prints a warning to stderr and exits 0 (no error), but
+Ansible would still mark the task as `changed`. The correct idempotent pattern
+uses `args.creates:` pointing to the extension's directory:
+
+```yaml
+- name: Install gh extensions
+  ansible.builtin.command:
+    cmd: "gh extension install {{ item.repo }}"
+  args:
+    creates: "/home/{{ ansible_user }}/.local/share/gh/extensions/gh-{{ item.name }}"
+  loop: "{{ gh_extensions }}"
+```
+
+Ansible's `creates:` skips the task entirely if the path exists, making the
+install step truly idempotent: `ok` on second run, `changed` only when the
+extension directory is absent (first install or after manual removal).
+
+Binary extensions (like `gh-dash`) contain a single precompiled executable in
+their directory. Script extensions (like `gh-grep`) contain the cloned git
+repository. In both cases the directory name is `gh-<name>`, making the
+filesystem check reliable regardless of extension type.
+
+#### Upgrade
+
+A separate task upgrades all installed extensions after install:
+
+```yaml
+- name: Upgrade all gh extensions to latest
+  ansible.builtin.command:
+    cmd: gh extension upgrade --all
+  register: gh_ext_upgrade
+  changed_when: "'Upgraded' in gh_ext_upgrade.stdout"
+```
+
+`gh extension upgrade --all` updates all extensions to their latest release
+(or latest commit for script extensions). The `changed_when` condition detects
+actual upgrades by checking for `"Upgraded"` in stdout, so the task reports
+`ok` when everything is already at the latest version.
+
+### Complete `gh auth` subcommand reference
+
+| Subcommand | Purpose | Key flags |
+|---|---|---|
+| `gh auth login` | Authenticate with a GitHub host | `--with-token`, `--web`, `--hostname`, `--git-protocol`, `--insecure-storage`, `--scopes` |
+| `gh auth logout` | Remove stored credentials | `--hostname`, `--user` |
+| `gh auth status` | Show authentication state and token scopes | `--hostname`, `--show-token` |
+| `gh auth token` | Print the active token to stdout | `--hostname`, `--user` |
+| `gh auth refresh` | Add or remove OAuth scopes on the existing token | `--hostname`, `--scopes`, `--remove-scopes`, `--reset-scopes` |
+| `gh auth setup-git` | Configure `git` to use `gh` as credential helper | `--hostname`, `--force` |
+| `gh auth switch` | Switch active account (multi-account) | `--hostname`, `--user` |
+
+### Complete `gh extension` subcommand reference
+
+| Subcommand | Purpose | Key flags |
+|---|---|---|
+| `gh extension install <repo>` | Install an extension | `--force` (upgrade if exists), `--pin <ref>` |
+| `gh extension list` | List installed extensions | — |
+| `gh extension upgrade {name\|--all}` | Upgrade extensions | `--all`, `--force`, `--dry-run` |
+| `gh extension remove <name>` | Uninstall an extension | — |
+| `gh extension search [query]` | Search available extensions | `--limit`, `--sort`, `--owner` |
+| `gh extension browse` | Interactive TUI browser | `--debug`, `--single-column` |
+| `gh extension create [name]` | Scaffold a new extension | `--precompiled {go\|other}` |
+| `gh extension exec <name>` | Execute extension (bypass name conflicts) | — |
+
+---
+
 ## References
 
 ### Core project technologies
@@ -667,8 +934,124 @@ uv is under very active development with frequent releases.
 ### Post-provisioning
 - [ansible-core documentation](https://docs.ansible.com/ansible-core/devel/)
 - [Ansible built-in modules](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/)
+- [community.general.git_config module](https://docs.ansible.com/ansible/latest/collections/community/general/git_config_module.html)
+
+### GitHub CLI (gh)
+- [gh manual](https://cli.github.com/manual/)
+- [gh auth login](https://cli.github.com/manual/gh_auth_login)
+- [gh auth setup-git](https://cli.github.com/manual/gh_auth_setup-git)
+- [gh environment variables](https://cli.github.com/manual/gh_help_environment)
+- [gh extension install](https://cli.github.com/manual/gh_extension_install)
+- [gh extension upgrade](https://cli.github.com/manual/gh_extension_upgrade)
+- [gh source: headless login logic](https://github.com/cli/cli/blob/trunk/pkg/cmd/auth/login/login.go)
+- [gh source: git credential helper config](https://github.com/cli/cli/blob/trunk/pkg/cmd/auth/shared/gitcredentials/helper_config.go)
 
 ### Python tooling
 - [uv documentation](https://docs.astral.sh/uv/)
 - [uv — Working on Projects](https://docs.astral.sh/uv/guides/projects/)
 - [uv GitHub repository](https://github.com/astral-sh/uv)
+
+### Shell history
+- [Atuin documentation](https://docs.atuin.sh/)
+- [Atuin configuration reference](https://docs.atuin.sh/configuration/config/)
+- [Atuin GitHub repository](https://github.com/atuinsh/atuin)
+
+---
+
+## 10. Shell History: Atuin (local-only)
+
+[Atuin](https://github.com/atuinsh/atuin) replaces the standard shell history with
+a SQLite-backed store that records timestamps, exit codes, working directories,
+and durations alongside each command. It provides an interactive TUI search (Ctrl-R)
+with fuzzy matching and filtering by host, session, or directory.
+
+### Design decision: no sync account, no remote server
+
+Atuin offers a sync service (hosted at `api.atuin.sh` or self-hosted). This project
+deliberately **disables all sync** (`auto_sync = false` in `config.toml`). Rationale:
+
+- Shell history can contain secrets, tokens, hostnames, internal URLs, and
+  sensitive command-line arguments.
+- Uploading history to any remote service — even end-to-end encrypted — creates
+  an off-machine copy of that data.
+- A local-only SQLite database has a well-understood attack surface and needs no
+  credentials or key management.
+
+As a result: no `atuin register`, no `atuin login`, no encryption key to manage,
+and no network traffic from atuin.
+
+### History bootstrap during provisioning
+
+The VM starts with an empty atuin database. To make the development environment
+immediately useful, `make provision` seeds the VM's atuin database with the
+**controller's** (laptop's) zsh history:
+
+1. **Upload** — Ansible `copy` reads `~/.zsh_history` from the Ansible controller
+   (your laptop; `~` resolves on the controller side) and uploads it to a staging
+   path on the VM (`~/.zsh_history_import`).
+
+2. **Import** — `atuin import zsh` runs as the VM user with `HISTFILE` pointed at
+   the staging file. Atuin parses both zsh extended-history format
+   (`: timestamp:duration;command`) and plain format, deduplicating entries against
+   any existing records in the SQLite database.
+
+3. **Cleanup** — The staging file is deleted. The VM's own `~/.zsh_history` is
+   left untouched so it continues accumulating VM-local history independently.
+
+Re-running `make provision` is safe: only new entries from the laptop are imported.
+VM-local commands already in atuin's database are not affected.
+
+### Overriding the source history file
+
+By default the task uses `~/.zsh_history` (controller home directory). To specify
+a different file:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml \
+  -e local_zsh_history_file=/path/to/other_histfile \
+  --tags atuin
+```
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `files/atuin_config.toml` | Atuin config deployed to `~/.config/atuin/config.toml` on the VM |
+| `playbook.yml` tasks tagged `atuin` | Config dir, config file, upload, import, cleanup |
+
+### Configuration highlights (`files/atuin_config.toml`)
+
+| Setting | Value | Notes |
+|---|---|---|
+| `auto_sync` | `false` | No remote sync ever |
+| `search_mode` | `fuzzy` | Fuzzy search in TUI |
+| `filter_mode` | `global` | Search across all hosts/sessions |
+| `style` | `compact` | Single-line TUI entries |
+| `enter_accept` | `true` | Enter runs immediately; Tab edits first |
+| `secrets_filter` | `true` | Auto-filters AWS keys, GitHub tokens, etc. |
+
+### Shell integration
+
+The zshrc (`files/zshrc`) already contains the shell integration guard:
+
+```zsh
+if command -v atuin &>/dev/null; then
+  eval "$(atuin init zsh)"
+fi
+```
+
+`atuin init zsh` binds Ctrl-R to the atuin TUI search and hooks `preexec`/`precmd`
+to record each command's start time, exit code, and duration into the local SQLite
+database (`~/.local/share/atuin/history.db`).
+
+### Data directory layout on the VM
+
+```
+~/.local/share/atuin/
+├── history.db     # All command history (SQLite)
+├── records.db     # Sync v2 record store (unused; no sync)
+└── meta.db        # Host ID, session tokens (local only)
+
+~/.config/atuin/
+└── config.toml    # Deployed by Ansible
+```

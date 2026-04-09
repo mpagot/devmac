@@ -85,6 +85,41 @@ This project uses `uv` to manage Python and Ansible dependencies via `pyproject.
         ```bash
         make provision
         ```
+        To increase Ansible verbosity for troubleshooting, pass the `VERBOSITY` variable:
+        ```bash
+        make provision VERBOSITY=-vvv
+        ```
+
+### GitHub PAT for `gh` CLI authentication
+
+The playbook configures `gh` (GitHub CLI) on the VM so the user can start using
+it immediately over SSH without any manual login. This requires a GitHub Personal
+Access Token (PAT) stored on the Ansible controller before provisioning.
+
+**Step 1 — Create the PAT on GitHub:**
+
+1. Go to <https://github.com/settings/tokens> → **Generate new token (classic)**
+2. Set a note (e.g. `dev-vm-gh-cli`) and an expiration date
+3. Select at minimum these scopes: `repo`, `read:org`, `gist`
+4. Click **Generate token** and copy the value (shown only once)
+
+**Step 2 — Store it in the project:**
+
+```bash
+echo "ghp_yourTokenHere" > .secret/gh_pat
+chmod 600 .secret/gh_pat
+```
+
+The `.secret/` directory is already gitignored. The file must be present before
+running `ansible-playbook` or `make provision`. The token is read by Ansible
+via `vars/gh.yml` using `lookup('file', '.secret/gh_pat')` and is never written
+to Ansible logs (`no_log: true`).
+
+To run only the gh-related tasks without reprovisioning the entire VM:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags gh
+```
 
 7.  **Destroy the VM:**
     To destroy the VM and all associated resources, run:

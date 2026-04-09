@@ -1,0 +1,33 @@
+[[language]]
+name = "html"
+language-servers = [ "vscode-html-language-server", "vale-ls" ]
+
+[[language]]
+name = "perl"
+scope = "source.perl"
+file-types = ["pl", "pm", "t", "psgi", "raku", "rakumod", "rakutest", "rakudoc", "nqp", "p6", "pl6", "pm6"]
+shebangs = ["perl"]
+comment-token = "#"
+language-servers = [ "perlnavigator", "vale-ls" ]
+indent = { tab-width = 2, unit = "  " }
+
+[[language]]
+name = "zig"
+
+[language.debugger]
+command = "codelldb"
+name = "codelldb"
+port-arg = "--port {}"
+transport = "tcp"
+
+[[language.debugger.templates]]
+name = "binary"
+request = "launch"
+
+[[language.debugger.templates.completion]]
+completion = "filename"
+name = "binary"
+
+[language.debugger.templates.args]
+program = "{0}"
+runInTerminal = true
