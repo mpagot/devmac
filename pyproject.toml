@@ -1,7 +1,7 @@
 [project]
 name = "my-suse-machine"
 version = "0.1.0"
-description = "Add your description here"
+description = "My dev machine will survive!!"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

@@ -130,9 +130,9 @@ ansible-lint:
 
 # ── Linting ────────────────────────────────────────────────────────────────
 
-## yaml-lint: Lint all YAML files (playbook, vars/, requirements, files/)
+## yaml-lint: Lint all YAML files (playbook, vars/, requirements, files/, .github/)
 yaml-lint:
-	$(UV) run yamllint playbook.yml requirements.yml vars/ files/
+	$(UV) run yamllint playbook.yml requirements.yml vars/ files/ .github/
 
 ## lint: Run all checks — format Terraform, validate, lint Ansible and YAML
 lint: tofu-format tofu-validate ansible-lint yaml-lint

@@ -1,0 +1,44 @@
+---
+name: lint
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      - name: Set up uv and Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Install Ansible Galaxy collections
+        run: uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: tofu fmt (check)
+        run: tofu fmt -check -recursive
+
+      - name: tofu init
+        run: tofu init
+
+      - name: tofu validate
+        run: tofu validate
+
+      - name: ansible-lint
+        run: uv run ansible-lint playbook.yml
+
+      - name: yamllint
+        run: uv run yamllint playbook.yml requirements.yml vars/ files/

@@ -4,7 +4,7 @@
 
 > For a dev machine that will survive!!!
 
-Is a dotfile repo enough in the cloud age? This is my pretty openSUSE centric way to setup a dev machine that I use everyday
+Is a dotfile repo enough in the cloud age? This is my pretty openSUSE-centric way to set up a dev machine that I use every day
 as QE dude in the fight.
 This project uses OpenTofu and Ansible to define and provision a development VM on a remote (ssh accessible) KVM server.
 
@@ -17,10 +17,9 @@ This project uses OpenTofu and Ansible to define and provision a development VM 
 - [zoxide](https://github.com/ajeetdsouza/zoxide) — smart `cd` (`z` / `zi`)
 - [fzf](https://github.com/junegunn/fzf) — fuzzy finder, wired into git aliases
 - [eza](https://eza.rocks/) — modern `ls` replacement (`ll` alias)
+- Some handy git aliases
 
-Some handy git aliases
-
-In case you do not like zsh, you also have bash, fish and nu.
+And in case you do not like zsh, you also get bash, fish and nu.
 
 ### Terminal multiplexer — Tmux
 
@@ -64,7 +63,7 @@ Optional GPG commit signing: import your private key once.
 
 ## Dependencies
 
-Tools you need on the machine you use to create the remove VM.
+Tools you need on the machine you use to create the remote VM.
 
 - make
 - [OpenTofu](https://opentofu.org/) >= 1.6
@@ -107,7 +106,7 @@ disk_size                  = 53687091200 # 50GB
 
 ### Personal and org overrides
 
-All personal or organisation-specific data lives in the `.secret/` directory,
+All personal or organization-specific data lives in the `.secret/` directory,
 which is gitignored and never committed. The repository ships with generic
 defaults that work out of the box; drop one or more of the files below into
 `.secret/` to inject your real identity and infrastructure details.
@@ -347,6 +346,80 @@ make clean
 This removes the domain from the KVM host (`virsh undefine --nvram`) and from
 the local state. You can then re-run `make tofu-deploy`.
 
-## Extend further
+## Ricing Tweaking 'n Overclocking
 
-<!-- TODO: where to add more packages (vars/packages.yml), more asdf plugins (vars/asdf_plugins.yml), more aliases (templates/zshrc.j2), manage shell history (files/atuin_config.toml) -->
+The project is intentionally easy to extend. No roles, no Galaxy dependencies
+for the core logic — everything is a list in a vars file or a block in
+`playbook.yml`.
+
+### Add system packages
+
+Edit `vars/packages.yml`. Packages under `favorite_packages` are installed on
+every provision; packages under `helix_zypper_packages` are grouped with the
+Helix LSP dependencies and installed under the `helix` tag.
+
+```yaml
+favorite_packages:
+  - your-new-package
+```
+
+Re-run with the `packages` tag to apply without full reprovisioning:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags packages
+```
+
+### Add a runtime version via asdf
+
+Edit `vars/asdf_plugins.yml`. Each entry needs a plugin name, its upstream
+repository URL, and one or more versions to install. Set `global: true` on the
+version that should be the default.
+
+```yaml
+asdf_plugins:
+  - name: python
+    url: https://github.com/danhper/asdf-python.git
+    versions:
+      - version: "3.13.0"
+        installed_version_pattern: "3\\.13\\.0"
+        global: true
+```
+
+Re-run with the `asdf` tag:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags asdf
+```
+
+### Add shell aliases or functions
+
+Edit `templates/zshrc.j2`. Aliases live in the aliases block around line 44;
+shell functions follow. The file is a Jinja2 template so you can use
+`{{ variable }}` expressions if needed.
+
+```bash
+alias k='kubectl'
+```
+
+Re-run with the `dotfiles` tag:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags dotfiles
+```
+
+### Tune shell history (atuin)
+
+Edit `files/atuin_config.toml`. The most useful knobs:
+
+| Key | Default | What it controls |
+| --- | ------- | ---------------- |
+| `filter_mode` | `"global"` | `"global"`, `"host"`, `"session"`, or `"directory"` |
+| `search_mode` | `"fuzzy"` | `"fuzzy"` or `"fulltext"` |
+| `inline_height` | `40` | lines of the inline search UI |
+| `secrets_filter` | `true` | auto-hide tokens and keys from results |
+
+Re-run with the `atuin` tag:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags atuin
+```
