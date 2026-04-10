@@ -220,6 +220,14 @@ resource "libvirt_domain" "domain" {
     ]
   }
 
+  # Workaround for dmacvicar/libvirt provider read-back bugs (v0.9.5–v0.9.7):
+  #  - os.firmware: provider sends "efi" but reads back null
+  #  - devices consoles pty.path: "" becomes "/dev/pts/N" at runtime
+  # See PROVIDER_ISSUES.md Issues 1 and 7. Remove when provider is fixed.
+  lifecycle {
+    ignore_changes = [os, devices]
+  }
+
   provisioner "local-exec" {
     command = <<-EOT
       set -e

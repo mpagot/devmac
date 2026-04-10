@@ -1,7 +1,7 @@
 variable "libvirt_uri" {
   description = "URI for the libvirt connection"
   type        = string
-  default     = "qemu+ssh://root@qesap-kvm1.qe.prg3.suse.org/system"
+  default     = ""
 }
 
 variable "hostname" {

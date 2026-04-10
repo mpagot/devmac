@@ -420,7 +420,7 @@ earlier experimentation with MicroOS/SLE Micro images.
 The provider connects to a remote KVM/libvirt host via:
 
 ```
-qemu+ssh://root@qesap-kvm1.qe.prg3.suse.org/system
+qemu+ssh://root@your-kvm-host.example.com/system
 ```
 
 This is a supported libvirt connection URI, but several provider resources
@@ -679,7 +679,7 @@ Each flag serves a specific purpose:
 |---|---|
 | `--with-token` | Reads the PAT from stdin; bypasses all interactive prompts. The token is validated against the GitHub API before being stored — an expired or malformed token causes the task to fail immediately at deploy time rather than silently later. |
 | `--git-protocol https` | Sets the default git protocol for this host in `~/.config/gh/hosts.yml`. Without it `gh` defaults to HTTPS anyway, but specifying it makes the configuration explicit. |
-| `--insecure-storage` | Writes the PAT in **plain text** into `~/.config/gh/hosts.yml` instead of the system keyring. This is required because the system keyring (GNOME Keyring, KDE Wallet) is unavailable in headless SSH sessions. `gh auth status` on the local dev machine shows this directly: `X Timeout trying to log in to github.com account mpagot (keyring)` — the keyring daemon is not accessible over SSH. Without this flag, `gh auth login` would succeed during provisioning, but every subsequent `gh` call in a new SSH session would timeout trying to reach the keyring. |
+| `--insecure-storage` | Writes the PAT in **plain text** into `~/.config/gh/hosts.yml` instead of the system keyring. This is required because the system keyring (GNOME Keyring, KDE Wallet) is unavailable in headless SSH sessions. `gh auth status` on the local dev machine shows this directly: `X Timeout trying to log in to github.com account <user> (keyring)` — the keyring daemon is not accessible over SSH. Without this flag, `gh auth login` would succeed during provisioning, but every subsequent `gh` call in a new SSH session would timeout trying to reach the keyring. |
 
 The Ansible task uses `no_log: true` to ensure the PAT never appears in
 Ansible output, logs, or `--verbose` traces:
@@ -727,11 +727,11 @@ Required PAT scopes: `repo`, `read:org`, `gist`.
 
 ```yaml
 github.com:
-    user: mpagot
+    user: <your-github-username>
     oauth_token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     git_protocol: https
     users:
-        mpagot:
+        <your-github-username>:
             oauth_token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 

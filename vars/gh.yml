@@ -16,7 +16,11 @@ gh_extensions:
     repo: k1LoW/gh-grep
 
 # ── git global config ─────────────────────────────────────────────────────────
-git_user_name: "Michele Pagot"
-git_user_email: "mpagot@suse.com"
+git_user_name: "Your Name"
+git_user_email: "you@example.com"
 git_editor: hx
 git_default_branch: main
+
+# ── GitHub username (used in shell aliases, e.g. ghsync, gh_pr) ───────────────
+# Override in .secret/personal.yml with your real GitHub login.
+gh_username: "your-github-username"

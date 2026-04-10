@@ -1,4 +1,6 @@
 # ~/.zshrc — devenv shell configuration
+# Managed by Ansible — do not edit manually.
+# Source: templates/zshrc.j2 / vars/gh.yml
 
 # ── History ────────────────────────────────────────────────────────────────────
 HISTFILE=~/.zsh_history
@@ -61,7 +63,7 @@ _git_default_branch() {
 ghsync() {
   local branch=$(_git_default_branch)
   git checkout "$branch" && \
-    gh repo sync mpagot/$(basename $(git rev-parse --show-toplevel)) -b "$branch" && \
+    gh repo sync {{ gh_username }}/$(basename $(git rev-parse --show-toplevel)) -b "$branch" && \
     git pull
 }
 
@@ -103,7 +105,7 @@ gh_pr() {
   echo "MYGH_UP : ${MYGH_UP}"
   local MYGH_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
   echo "MYGH_BRANCH : ${MYGH_BRANCH}"
-  local MYGH_PR="$(GH_PAGER= gh pr -R ${MYGH_UP} --json 'number' -q '.[0].number' list -A mpagot -H ${MYGH_BRANCH} -s all)"
+  local MYGH_PR="$(GH_PAGER= gh pr -R ${MYGH_UP} --json 'number' -q '.[0].number' list -A {{ gh_username }} -H ${MYGH_BRANCH} -s all)"
   echo "This is PR: ${MYGH_PR}"
   [[ -z "${MYGH_PR}" ]] && echo "No PR!!!"
   GH_PAGER= gh pr -R ${MYGH_UP} view $1 ${MYGH_PR}

@@ -28,6 +28,27 @@
       tags:
         - always
 
+    # ── Optional personal overrides ────────────────────────────────────────
+    # If .secret/personal.yml exists on the controller, load it to override
+    # generic defaults (e.g. git_user_name, git_user_email) from vars/gh.yml.
+    # See README.md § "Personal and company overrides" for details.
+
+    - name: Check for personal variable overrides
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/.secret/personal.yml"
+      register: personal_overrides_file
+      delegate_to: localhost
+      become: false
+      tags:
+        - always
+
+    - name: Load personal variable overrides if available
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/.secret/personal.yml"
+      when: personal_overrides_file.stat.exists
+      tags:
+        - always
+
   tasks:
     - name: Ping my hosts
       ansible.builtin.ping:
@@ -99,8 +120,8 @@
         - dotfiles
 
     - name: Deploy .zshrc
-      ansible.builtin.copy:
-        src: files/zshrc
+      ansible.builtin.template:
+        src: templates/zshrc.j2
         dest: "/home/{{ ansible_user }}/.zshrc"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
@@ -572,9 +593,19 @@
         - gh
         - gh_extensions
 
+    - name: Check for personal gh-dash config override
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/.secret/gh_dash_config.yml"
+      register: gh_dash_override_file
+      delegate_to: localhost
+      become: false
+      tags:
+        - gh
+        - gh_extensions
+
     - name: Deploy gh-dash config.yml
       ansible.builtin.copy:
-        src: files/gh_dash_config.yml
+        src: "{{ (gh_dash_override_file.stat.exists) | ternary('.secret/gh_dash_config.yml', 'files/gh_dash_config.yml') }}"
         dest: "/home/{{ ansible_user }}/.config/gh-dash/config.yml"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
