@@ -121,6 +121,9 @@ export EDITOR='vim'
 export PAGER='less'
 export LESS='-RFX'
 
+# GPG agent TTY — needed for pinentry in interactive SSH sessions
+export GPG_TTY=$(tty)
+
 # Prefer XDG dirs
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"

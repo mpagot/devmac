@@ -21,6 +21,14 @@ git_user_email: "you@example.com"
 git_editor: hx
 git_default_branch: main
 
+# ── GPG commit signing (optional) ─────────────────────────────────────────────
+# Set git_signing_key to your GPG key ID and git_gpg_sign to "true" to enable
+# signed commits globally on the VM.  Also place your exported private key at
+# .secret/gpg_private_key.asc (see README for instructions).
+# Override both in .secret/personal.yml with your real values.
+git_signing_key: ""
+git_gpg_sign: "false"
+
 # ── GitHub username (used in shell aliases, e.g. ghsync, gh_pr) ───────────────
 # Override in .secret/personal.yml with your real GitHub login.
 gh_username: "your-github-username"

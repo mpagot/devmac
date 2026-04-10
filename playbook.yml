@@ -642,6 +642,131 @@
         - gh
         - git_config
 
+    # ── GPG commit signing (optional) ─────────────────────────────────────────
+    # Enabled when git_signing_key is non-empty (set in .secret/personal.yml).
+    # The private key is sourced from .secret/gpg_private_key.asc (gitignored).
+    # It is copied to a temp path on the VM, imported, then immediately deleted.
+    # block/always guarantees the temp file is removed even if import fails.
+    #
+    # gpg-agent is configured for loopback pinentry so commits can be signed
+    # over SSH without a graphical pinentry dialog; the passphrase is cached by
+    # the agent (default-cache-ttl: 8 h, max-cache-ttl: 24 h).
+
+    - name: Check for GPG private key file on controller
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/.secret/gpg_private_key.asc"
+      register: gpg_key_file
+      delegate_to: localhost
+      become: false
+      when: git_signing_key != ""
+      tags:
+        - gpg
+        - git_config
+
+    - name: Ensure ~/.gnupg directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.gnupg"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+      when: git_signing_key != ""
+      tags:
+        - gpg
+        - git_config
+
+    - name: Import GPG private key and set ultimate trust
+      when: git_signing_key != "" and (gpg_key_file is defined) and gpg_key_file.stat.exists
+      tags:
+        - gpg
+        - git_config
+      block:
+        - name: Copy GPG private key to remote temp location
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/.secret/gpg_private_key.asc"
+            dest: /tmp/.gpg_import_key.asc
+            owner: "{{ ansible_user }}"
+            mode: "0600"
+          no_log: true
+
+        - name: Import GPG private key into keyring
+          ansible.builtin.command:
+            cmd: gpg --batch --import /tmp/.gpg_import_key.asc
+          become: true
+          become_user: "{{ ansible_user }}"
+          environment:
+            HOME: "/home/{{ ansible_user }}"
+          register: gpg_import_result
+          changed_when: >-
+            'secret key imported' in (gpg_import_result.stderr | default('')) or
+            'secret keys imported' in (gpg_import_result.stderr | default(''))
+
+        - name: Set GPG key trust to ultimate
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              gpg --with-colons --fingerprint '{{ git_signing_key }}' 2>/dev/null \
+                | awk -F: '/^fpr/{print $10; exit}' \
+                | sed 's/$/:6:/' \
+                | gpg --batch --import-ownertrust
+            executable: /bin/bash
+          become: true
+          become_user: "{{ ansible_user }}"
+          environment:
+            HOME: "/home/{{ ansible_user }}"
+          changed_when: false
+
+      always:
+        - name: Remove GPG private key from remote temp location
+          ansible.builtin.file:
+            path: /tmp/.gpg_import_key.asc
+            state: absent
+
+    - name: Configure gpg-agent for loopback pinentry
+      ansible.builtin.copy:
+        content: |
+          allow-loopback-pinentry
+          default-cache-ttl 28800
+          max-cache-ttl 86400
+        dest: "/home/{{ ansible_user }}/.gnupg/gpg-agent.conf"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+      when: git_signing_key != ""
+      tags:
+        - gpg
+        - git_config
+
+    - name: Configure gpg for loopback pinentry
+      ansible.builtin.copy:
+        content: |
+          pinentry-mode loopback
+        dest: "/home/{{ ansible_user }}/.gnupg/gpg.conf"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+      when: git_signing_key != ""
+      tags:
+        - gpg
+        - git_config
+
+    - name: Configure global git signing settings
+      community.general.git_config:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        scope: global
+      become: true
+      become_user: "{{ ansible_user }}"
+      loop:
+        - {name: user.signingkey, value: "{{ git_signing_key }}"}
+        - {name: commit.gpgsign, value: "{{ git_gpg_sign }}"}
+      when: git_signing_key != ""
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - gpg
+        - git_config
+
     # ── tmux configuration ─────────────────────────────────────────────────────
     # TPM and plugins are cloned via ansible.builtin.git (idempotent; avoids
     # running a headless TPM install script).  The catppuccin/tmux repo uses the

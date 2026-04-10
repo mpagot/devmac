@@ -1,81 +1,146 @@
 # Development VM as Code
 
+![logo](logo.png)
+
+> For a dev machine that will survive!!!
+
 Is a dotfile repo enough in the cloud age? This is my pretty openSUSE centric way to setup a dev machine that I use everyday
 as QE dude in the fight.
 This project uses OpenTofu and Ansible to define and provision a development VM on a remote (ssh accessible) KVM server.
 
-## Requirements
+## Supported features and tools I love
 
+### Shell — Zsh
+
+- [starship](https://starship.rs/) prompt — two-line, shows git status, language versions, command duration; username/hostname only in SSH sessions
+- [atuin](https://atuin.sh/) — shell history search replacing Ctrl-R; fully local (no cloud sync), fuzzy search, secrets filter
+- [zoxide](https://github.com/ajeetdsouza/zoxide) — smart `cd` (`z` / `zi`)
+- [fzf](https://github.com/junegunn/fzf) — fuzzy finder, wired into git aliases
+- [eza](https://eza.rocks/) — modern `ls` replacement (`ll` alias)
+
+Some handy git aliases
+
+In case you do not like zsh, you also have bash, fish and nu.
+
+### Terminal multiplexer — Tmux
+
+[tmux](https://github.com/tmux/tmux) with [catppuccin Mocha](https://github.com/catppuccin/tmux) theme, sensible defaults, and custom splits (`|` / `_`) that preserve the working directory.
+[zellij](https://zellij.dev/) also installed as an alternative.
+
+### Editor — Helix
+
+[Helix](https://helix-editor.com/) as the primary editor, configured with a full LSP suite:
+
+| Language | LSP / Tool | Notes |
+| -------- | ---------- | ----- |
+| Python | `ruff`, `pylsp` | linting + completion |
+| TOML | `taplo` | |
+| Markdown | `markdown-oxide`, `marksman` | |
+| Zig | `zls`, `codelldb` | debug adapter via vsix |
+| Rust | `rust-analyzer` | via `rustup` |
+| Bash | `bash-language-server` | via npm |
+| YAML | `yaml-language-server` | via npm |
+| Ansible | `@ansible/ansible-language-server` | via npm |
+| Perl | `perlnavigator`, `vale-ls` | |
+| HCL / Terraform | `terraform-ls` | |
+| Multi-language | `prettier` | formatter, via npm |
+
+### Git and GitHub — `git` + `gh` + `gh-dash`
+
+Global config with sane defaults (`init.defaultBranch = main`, `core.editor = hx`).
+Optional GPG commit signing: import your private key once.
+
+- `gh` CLI authenticated headlessly via PAT, configured as git credential helper
+- [gh-dash](https://github.com/dlvhdr/gh-dash) — terminal dashboard for PRs and issues
+- [gh-grep](https://github.com/k1LoW/gh-grep) — grep across GitHub repos from the CLI
+
+### Runtime version manager — asdf
+
+[asdf](https://asdf-vm.com/) managing: nodejs and zig
+
+### Other tools
+
+[lazygit](https://github.com/jesseduffield/lazygit), [uv](https://docs.astral.sh/uv/), Python 3.11 / 3.12 / 3.14.
+
+## Dependencies
+
+Tools you need on the machine you use to create the remove VM.
+
+- make
 - [OpenTofu](https://opentofu.org/) >= 1.6
 - Access to a remote KVM server
 - [uv](https://docs.astral.sh/uv/) for managing Python/Ansible dependencies
 
+**Clone the repository:**
+```bash
+git clone <repository-url>
+cd <repository-name>
+```
 
-## Usage
+## Configuration
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd <repository-name>
-    ```
+### KVM host and VM name
 
-2.  **Set the KVM host and VM name:**
-    Create `.secret/make.env` with your KVM connection and desired hostname.
-    The Makefile uses these to generate `host.auto.tfvars` (auto-loaded by
-    OpenTofu) and for all `virsh` commands.
-    ```makefile
-    KVM_HOST = root@kvm-server.internal.example.com
-    VM_NAME  = my-dev-vm
-    ```
+Create `.secret/make.env` with your KVM connection and desired hostname.
+The Makefile uses these to generate `host.auto.tfvars` (auto-loaded by OpenTofu) and for all `virsh` commands.
 
-3.  **Configure the VM:**
-    Create a `terraform.tfvars` file for the remaining variables (see
-    `variables.tf` for the full list with defaults).  You need at least
-    your SSH public key:
-    ```terraform
-    ssh_key                    = "ssh-rsa AAAA..." # Your public SSH key
-    ansible_private_key_path   = "~/.ssh/id_rsa"
-    private_ssh_keys_to_upload = ["~/.ssh/id_rsa"]
-    memory                     = 8192
-    vcpu                       = 4
-    disk_size                  = 53687091200 # 50GB
-    ```
-    **Do not** put `hostname` or `libvirt_uri` here — they are generated
-    automatically from `.secret/make.env`.
+```makefile
+KVM_HOST = root@kvm-server.internal.example.com
+VM_NAME  = my-dev-vm
+```
 
-4.  **Deploy the VM:**
-    ```bash
-    make tofu-deploy
-    ```
-    This runs `init → plan → apply`, discovers the VM's IP via the QEMU
-    guest agent, and writes `inventory.ini`.
+### VM resources
 
-    > **Note — expected error on first deploy:** The libvirt provider
-    > (v0.9.5–v0.9.7) has read-back bugs that cause `tofu apply` to fail
-    > with a consistency error on the *first* creation (`os.firmware` and
-    > `pty.path` fields). **The VM is created successfully** — the Makefile
-    > detects this, runs `tofu untaint`, and proceeds to generate inventory.
-    > Subsequent runs are idempotent and error-free.
+Create a `terraform.tfvars` file for the remaining variables (see `variables.tf` for the full list with defaults).
+You need at least your SSH public key:
 
-5.  **Connect to the VM:**
-    After the VM is deployed, you can connect to it using SSH:
-    ```bash
-    ssh <username>@<vm-ip-address>
-    ```
-    The default username is `devenv`. The VM's IP address is in the
-    generated `inventory.ini` file.
+```terraform
+ssh_key                    = "ssh-rsa AAAA..." # Your public SSH key
+ansible_private_key_path   = "~/.ssh/id_rsa"
+private_ssh_keys_to_upload = ["~/.ssh/id_rsa"]
+memory                     = 8192
+vcpu                       = 4
+disk_size                  = 53687091200 # 50GB
+```
 
-6.  **Provision with Ansible:**
-    -   After `make tofu-deploy`, an `inventory.ini` file will be automatically generated with the VM's IP address and SSH connection details.
-    -   An Ansible playbook `playbook.yml` is provided to install additional software.
-    -   Run the playbook:
-        ```bash
-        make ansible-provision
-        ```
-        To increase Ansible verbosity for troubleshooting, pass the `VERBOSITY` variable:
-        ```bash
-        make ansible-provision VERBOSITY=-vvv
-        ```
+**Do not** put `hostname` or `libvirt_uri` here — they are generated automatically from `.secret/make.env`.
+
+### Personal and org overrides
+
+All personal or organisation-specific data lives in the `.secret/` directory,
+which is gitignored and never committed. The repository ships with generic
+defaults that work out of the box; drop one or more of the files below into
+`.secret/` to inject your real identity and infrastructure details.
+
+| File                          | Purpose                                                        | Used by          |
+| ----------------------------- | -------------------------------------------------------------- | ---------------- |
+| `gh_pat`                      | GitHub Personal Access Token (plain text, mode 0600)           | Ansible          |
+| `personal.yml`                | Ansible variable overrides (git name, email, signing key, etc.)| Ansible          |
+| `gh_dash_config.yml`          | Full gh-dash config with your team-specific PR/issue sections  | Ansible          |
+| `make.env`                    | KVM host and VM name — single source of truth for `hostname` and `libvirt_uri`  | Make / OpenTofu  |
+| `gpg_private_key.asc`         | Exported GPG private key for signed commits (optional)         | Ansible          |
+
+`make.env` is the most important: the Makefile generates `host.auto.tfvars`
+from `KVM_HOST` and `VM_NAME`, which OpenTofu auto-loads alongside
+`terraform.tfvars`.  This avoids duplicating hostname and connection details
+across Make and Terraform configs.
+
+`terraform.tfvars` (also gitignored) holds the remaining infrastructure
+variables such as `ssh_key`, `memory`, `vcpu`, and `disk_size`.
+
+**Example `.secret/personal.yml`:**
+
+```yaml
+git_user_name: "Ada Lovelace"
+git_user_email: "ada@example.com"
+```
+
+**Example `.secret/make.env`:**
+
+```makefile
+KVM_HOST = root@kvm-server.internal.example.com
+VM_NAME  = ada-dev-vm
+```
 
 ### GitHub PAT for `gh` CLI authentication
 
@@ -102,66 +167,58 @@ running `ansible-playbook` or `make ansible-provision`. The token is read by Ans
 via `vars/gh.yml` using `lookup('file', '.secret/gh_pat')` and is never written
 to Ansible logs (`no_log: true`).
 
-To run only the gh-related tasks without reprovisioning the entire VM:
+### GPG commit signing
 
-```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags gh
-```
-
-### Personal and company overrides
-
-All personal or organisation-specific data lives in the `.secret/` directory,
-which is gitignored and never committed. The repository ships with generic
-defaults that work out of the box; drop one or more of the files below into
-`.secret/` to inject your real identity and infrastructure details.
-
-| File                          | Purpose                                                        | Used by          |
-| ----------------------------- | -------------------------------------------------------------- | ---------------- |
-| `gh_pat`                      | GitHub Personal Access Token (plain text, mode 0600)           | Ansible          |
-| `personal.yml`                | Ansible variable overrides (git name, email, etc.)             | Ansible          |
-| `gh_dash_config.yml`          | Full gh-dash config with your team-specific PR/issue sections  | Ansible          |
-| `make.env`                    | KVM host and VM name — single source of truth for `hostname` and `libvirt_uri`  | Make / OpenTofu  |
-
-`make.env` is the most important: the Makefile generates `host.auto.tfvars`
-from `KVM_HOST` and `VM_NAME`, which OpenTofu auto-loads alongside
-`terraform.tfvars`.  This avoids duplicating hostname and connection details
-across Make and Terraform configs.
-
-`terraform.tfvars` (also gitignored) holds the remaining infrastructure
-variables such as `ssh_key`, `memory`, `vcpu`, and `disk_size`.
-
-**Example `.secret/personal.yml`:**
+To have every commit signed on the VM automatically, add the signing key ID
+and enable signing in `.secret/personal.yml`:
 
 ```yaml
 git_user_name: "Ada Lovelace"
 git_user_email: "ada@example.com"
+git_signing_key: "YOUR40CHARFINGERPRINT"
+git_gpg_sign: "true"
 ```
 
-**Example `.secret/make.env`:**
+Find your key ID with:
 
-```makefile
-KVM_HOST = root@kvm-server.internal.example.com
-VM_NAME  = ada-dev-vm
+```bash
+gpg --list-secret-keys --keyid-format=long
 ```
 
-6.  **Destroy the VM:**
-    To destroy the VM and all associated resources, run:
-    ```bash
-    make tofu-destroy
-    ```
+The output looks like:
 
-7.  **Clean up a stale domain:**
-    If `make tofu-deploy` fails after the domain has been defined on the KVM host (e.g. the
-    VM was defined but failed to start), the domain may be left orphaned on the host
-    while absent from the Terraform state. Subsequent applies will fail with
-    `domain 'xxx' already exists`. To recover, run:
-    ```bash
-    make clean
-    ```
-    This removes the domain from the KVM host (`virsh undefine --nvram`) and from
-    the local state. You can then re-run `make tofu-deploy`.
+```
+sec  ed25519/44332211FFEEDDCCBBAA  2020-01-01 [SC]
+     YOUR40CHARFINGERPRINT    ← use this full fingerprint
+uid       [unknown] Your Name
+ssb  cv25519/AABBCCDD11223344  2020-01-01 [E]    ← ignore (encryption subkey)
+```
 
-## Variables
+Use the 40-character fingerprint on the second line. The 16-character ID after
+the `/` on the `sec` line also works, but the fingerprint is unambiguous and
+preferred.
+
+Then export your private key to `.secret/` on the Ansible controller **before**
+running `make ansible-provision`:
+
+```bash
+gpg --export-secret-keys --armor YOURKEYID16HEX > .secret/gpg_private_key.asc
+chmod 600 .secret/gpg_private_key.asc
+```
+
+Ansible will:
+1. Import the key into `~/.gnupg/` on the VM (then delete the temp copy).
+2. Set key trust to ultimate (non-interactively via `--import-ownertrust`).
+3. Write `~/.gnupg/gpg-agent.conf` with `allow-loopback-pinentry` and an 8-hour
+   passphrase cache so you only enter the passphrase once per SSH session.
+4. Write `~/.gnupg/gpg.conf` with `pinentry-mode loopback`.
+5. Set `user.signingkey` and `commit.gpgsign = true` in global git config.
+
+> **Note**: your public key must also be uploaded to your GitHub account at
+> <https://github.com/settings/gpg/new> for GitHub to show the "Verified" badge.
+> Export it with `gpg --armor --export YOURKEYID16HEX`.
+
+### Variables
 
 Infrastructure variables are split across two gitignored files to avoid
 duplication between Make and OpenTofu:
@@ -205,7 +262,56 @@ duplication between Make and OpenTofu:
 | `vcpu`                       | Number of vCPUs for the VM                             | `2`                                                                  |
 | `network_bridge`             | Name of the bridge to connect the VM to                | `"br0"`                                                              |
 
-## Note on Inventory Generation
+## Deployment
+
+### Deploy the VM
+
+```bash
+make tofu-deploy
+```
+
+This runs `init → plan → apply`, discovers the VM's IP via the QEMU guest agent, and writes `inventory.ini`.
+
+> **Note — expected error on first deploy:** The libvirt provider
+> (v0.9.5–v0.9.7) has read-back bugs that cause `tofu apply` to fail
+> with a consistency error on the *first* creation (`os.firmware` and
+> `pty.path` fields). **The VM is created successfully** — the Makefile
+> detects this, runs `tofu untaint`, and proceeds to generate inventory.
+> Subsequent runs are idempotent and error-free.
+
+### Provision with Ansible
+
+After `make tofu-deploy`, an `inventory.ini` file will be automatically generated with the VM's IP address and SSH connection details.
+An Ansible playbook `playbook.yml` is provided to install additional software.
+
+```bash
+make ansible-provision
+```
+
+To increase Ansible verbosity for troubleshooting, pass the `VERBOSITY` variable:
+
+```bash
+make ansible-provision VERBOSITY=-vvv
+```
+
+To run only a subset of tasks without reprovisioning the entire VM, use `--tags`:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags gh
+uv run ansible-playbook -i inventory.ini playbook.yml --tags gpg
+```
+
+### Connect to the VM
+
+After the VM is deployed, you can connect to it using SSH:
+
+```bash
+ssh <username>@<vm-ip-address>
+```
+
+The default username is `devenv`. The VM's IP address is in the generated `inventory.ini` file.
+
+### Inventory generation
 
 The `inventory.ini` file is generated by `make ansible-update-inventory`
 (called automatically at the end of `make tofu-deploy`). It discovers the
@@ -220,3 +326,27 @@ To refresh the IP without redeploying (e.g. after a DHCP lease change):
 ```bash
 make ansible-update-inventory
 ```
+
+### Destroy and clean up
+
+To destroy the VM and all associated resources, run:
+
+```bash
+make tofu-destroy
+```
+
+If `make tofu-deploy` fails after the domain has been defined on the KVM host (e.g. the
+VM was defined but failed to start), the domain may be left orphaned on the host
+while absent from the Terraform state. Subsequent applies will fail with
+`domain 'xxx' already exists`. To recover, run:
+
+```bash
+make clean
+```
+
+This removes the domain from the KVM host (`virsh undefine --nvram`) and from
+the local state. You can then re-run `make tofu-deploy`.
+
+## Extend further
+
+<!-- TODO: where to add more packages (vars/packages.yml), more asdf plugins (vars/asdf_plugins.yml), more aliases (templates/zshrc.j2), manage shell history (files/atuin_config.toml) -->
