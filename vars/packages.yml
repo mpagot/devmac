@@ -21,8 +21,37 @@ favorite_packages:
   - starship
   - zoxide
   - zsh
+osado_packages:
+# From the CONTRIBUTING.md
+  - perl-XML-LibXML
+  - perl-Inline-Python
+  - perl-XML-SemanticDiff
+  - perl-Net-SSH2
+  - perl-Perl-Critic
+  # - perl-Perl-Critic-Utils # mentioned in the documentation but it does not exist
+  - perl-File-Map
+  - perl-Time-Moment
+  - perl-Test-Mock-Time
+  - perl-Test-MockModule
+  # - perl-Perl-Critic-Policy # mentioned in the documentation but it does not exist
+  - perl-Net-DBus
+  - perl-Devel-Cover
+  - perl-Perl-Critic-Community
+  - perl-Socket-MsgHdr
+  - perl-Cpanel-JSON-XS
+  - perl-Crypt-DES
+  - perl-DateTime
+  - perl-Code-DRY
+  - perl-Code-TidyAll
+  - python3-PyYAML
+  - perl-App-cpanminus
+  - awk
+  - make
+  - os-autoinst-distri-opensuse-deps-worker
+  - perl-JSON-Validator
+  - gnu_parallel
+  - perl-Inline-Lua
 
-# ── Helix editor: language server & tool dependencies ─────────────────────────
 helix_zypper_packages:
   - clang-tools         # provides clangd   — LSP for c, cpp, opencl
   - lldb                # provides lldb-dap — debug adapter for c, cpp, rust, odin
@@ -35,7 +64,7 @@ helix_zypper_packages:
   - vale                # vale              — prose linter (required by vale-ls)
   - unzip               # unzip            — required by ansible.builtin.unarchive for .zip/.vsix
 
-# ── npm-based LSPs installed globally via asdf-managed nodejs ─────────────────
+# npm-based LSPs installed globally via asdf-managed nodejs
 helix_npm_packages:
   - bash-language-server
   - yaml-language-server

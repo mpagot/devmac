@@ -488,6 +488,13 @@
       tags:
         - helix
 
+    - name: Install OSADO dependencies
+      community.general.zypper:
+        name: "{{ osado_packages }}"
+        state: present
+      tags:
+        - osado
+
     # ── gh CLI: authentication, configuration, extensions ─────────────────────
     # After this block the user can SSH into the machine and use gh immediately
     # without any manual login or browser interaction.
