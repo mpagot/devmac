@@ -21,6 +21,9 @@ favorite_packages:
   - starship
   - zoxide
   - zsh
+  - gemini-cli
+  - bat
+
 osado_packages:
 # From the CONTRIBUTING.md
   - perl-XML-LibXML

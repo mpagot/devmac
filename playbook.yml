@@ -4,7 +4,7 @@
   become: true
   vars_files:
     - vars/packages.yml
-    - vars/helix_github_binaries.yml
+    - vars/github_binaries.yml
     - vars/gh.yml
     - vars/asdf_plugins.yml
 
@@ -824,3 +824,266 @@
       become_user: "{{ ansible_user }}"
       tags:
         - tmux
+
+    # ── AI / Code-Assist tools ─────────────────────────────────────────────────
+    # gemini-cli: installed via zypper in the `packages` section (vars/packages.yml).
+    # opencode + copilot: GitHub release binaries using the same idempotent version-
+    #   sentinel pattern as the Helix LSP binaries above.
+    # claude-code: official curl | bash installer (Anthropic's recommended method).
+    #   Installs to ~/.claude/local/; PATH is configured via zshrc template.
+    #
+    # Requires active subscriptions / API keys for use:
+    #   claude-code  — Anthropic account or ANTHROPIC_API_KEY
+    #   copilot      — active GitHub Copilot subscription
+
+    - name: Ensure ~/bin directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/bin"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - code_assist
+
+    # ── GitHub release binaries: Idempotent Installation ──────────────────────
+    # Version sentinels in ~/bin avoid re-downloading existing tools.
+
+    - name: Read installed version sentinels for code-assist binaries
+      ansible.builtin.command:
+        cmd: "cat /home/{{ ansible_user }}/bin/.{{ item.dest }}.version"
+      register: ca_version_check
+      loop: "{{ code_assist_github_binaries }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - code_assist
+
+    - name: Identify code-assist binaries that need install or update
+      ansible.builtin.set_fact:
+        ca_binaries_to_update: >-
+          {{ (ca_binaries_to_update | default([])) +
+             ([] if (ca_version_check.results[item | int].rc == 0 and
+                     ca_version_check.results[item | int].stdout.strip()
+                     == code_assist_github_binaries[item | int].version)
+                 else [code_assist_github_binaries[item | int]]) }}
+      loop: "{{ range(code_assist_github_binaries | length) | list }}"
+      loop_control:
+        label: "{{ code_assist_github_binaries[item | int].name }}"
+      tags:
+        - code_assist
+
+    # ── GitHub release binaries (archives: tar.gz) ─────────────────────────────
+    # All code-assist binaries are distributed as archives (archive: true).
+
+    - name: Download code-assist releases to /tmp
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "/tmp/ca_{{ item.name }}_archive"
+        mode: '0644'
+        force: true
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Create per-binary extraction directories in /tmp
+      ansible.builtin.file:
+        path: "/tmp/ca_{{ item.name }}_extract"
+        state: directory
+        mode: '0755'
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Extract code-assist releases
+      ansible.builtin.unarchive:
+        src: "/tmp/ca_{{ item.name }}_archive"
+        dest: "/tmp/ca_{{ item.name }}_extract"
+        remote_src: true
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Install extracted code-assist binaries to ~/bin
+      ansible.builtin.copy:
+        src: "/tmp/ca_{{ item.name }}_extract/{{ item.archive_path }}"
+        dest: "/home/{{ ansible_user }}/bin/{{ item.dest }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+        remote_src: true
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Cleanup temporary archive files
+      ansible.builtin.file:
+        path: "/tmp/ca_{{ item.name }}_archive"
+        state: absent
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Cleanup temporary extraction directories
+      ansible.builtin.file:
+        path: "/tmp/ca_{{ item.name }}_extract"
+        state: absent
+      loop: "{{ ca_binaries_to_update | selectattr('archive', 'equalto', true) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    - name: Record installed version for code-assist binaries
+      ansible.builtin.copy:
+        content: "{{ item.version }}"
+        dest: "/home/{{ ansible_user }}/bin/.{{ item.dest }}.version"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      loop: "{{ ca_binaries_to_update }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - code_assist
+
+    # ── claude-code: official installer ───────────────────────────────────────
+    # Installs to ~/.claude/local/claude; PATH entry is in the zshrc template.
+    # Re-running is safe: claude-code auto-updates itself after first install.
+    # The `creates:` guard skips the installer if the binary is already present.
+
+    - name: Install claude-code via official installer  # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          curl -fsSL https://claude.ai/install.sh | bash
+        executable: /bin/bash
+        creates: "/home/{{ ansible_user }}/.claude/local/claude"
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      tags:
+        - code_assist
+
+    # ── pi: terminal AI coding agent (full-directory install) ─────────────────
+    # The pi archive bundles a binary, photon_rs_bg.wasm, themes, and HTML export
+    # assets that must be co-located with the executable.  A single-binary copy
+    # to ~/bin (like opencode/copilot) would break wasm and asset loading.
+    #
+    # Install layout:
+    #   ~/.local/opt/pi/   full archive extract (binary + wasm + assets)
+    #   ~/bin/pi           symlink → ~/.local/opt/pi/pi
+    #
+    # Idempotent via ~/bin/.pi.version sentinel (same pattern as other tools).
+
+    - name: Check installed version sentinel for pi
+      ansible.builtin.command:
+        cmd: "cat /home/{{ ansible_user }}/bin/.pi.version"
+      register: pi_version_check
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - code_assist
+
+    - name: Determine if pi needs install or update
+      ansible.builtin.set_fact:
+        pi_needs_install: >-
+          {{ pi_version_check.rc != 0 or
+             pi_version_check.stdout.strip() != pi_binary.version }}
+      tags:
+        - code_assist
+
+    - name: Download pi release archive to /tmp
+      ansible.builtin.get_url:
+        url: "{{ pi_binary.url }}"
+        dest: "/tmp/pi_archive.tar.gz"
+        mode: '0644'
+        force: true
+      when: pi_needs_install
+      tags:
+        - code_assist
+
+    - name: Ensure ~/.local/opt directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.local/opt"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags:
+        - code_assist
+
+    - name: Remove previous pi installation before upgrade
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.local/opt/pi"
+        state: absent
+      when: pi_needs_install
+      tags:
+        - code_assist
+
+    - name: Extract pi release to ~/.local/opt/
+      ansible.builtin.unarchive:
+        src: "/tmp/pi_archive.tar.gz"
+        dest: "/home/{{ ansible_user }}/.local/opt/"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      when: pi_needs_install
+      tags:
+        - code_assist
+
+    - name: Ensure pi binary is executable
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.local/opt/pi/pi"
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+      when: pi_needs_install
+      tags:
+        - code_assist
+
+    - name: Create ~/bin/pi symlink to pi binary
+      ansible.builtin.file:
+        src: "/home/{{ ansible_user }}/.local/opt/pi/pi"
+        dest: "/home/{{ ansible_user }}/bin/pi"
+        state: link
+      become: true
+      become_user: "{{ ansible_user }}"
+      tags:
+        - code_assist
+
+    - name: Cleanup temporary pi archive
+      ansible.builtin.file:
+        path: "/tmp/pi_archive.tar.gz"
+        state: absent
+      when: pi_needs_install
+      tags:
+        - code_assist
+
+    - name: Record installed version for pi
+      ansible.builtin.copy:
+        content: "{{ pi_binary.version }}"
+        dest: "/home/{{ ansible_user }}/bin/.pi.version"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      when: pi_needs_install
+      tags:
+        - code_assist
