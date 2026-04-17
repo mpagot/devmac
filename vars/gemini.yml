@@ -1,0 +1,26 @@
+---
+# Valid values for gemini_auth_type:
+#   oauth-personal             — interactive OAuth via Google Account (browser flow)
+#   gemini-api-key             — Gemini API key from Google AI Studio (set GEMINI_API_KEY)
+#   vertex-ai                  — Vertex AI / Google Cloud (set GOOGLE_CLOUD_PROJECT)
+#   compute-default-credentials — Application Default Credentials (GCE / gcloud auth)
+#
+# Override in .secret/personal.yml for non-interactive / headless environments.
+gemini_auth_type: oauth-personal
+
+# Extensions installed via `gemini extensions install --consent --skip-settings`.
+# To upgrade: bump the ref, delete the extension directory on the VM, re-run.
+# name   — directory name under ~/.gemini/extensions/ (used for idempotency)
+# source — GitHub URL passed to `gemini extensions install`
+# ref    — git tag / release tag (omit to install from the default branch)
+gemini_extensions:
+  - name: code-review
+    source: https://github.com/gemini-cli-extensions/code-review
+
+  - name: conductor
+    source: https://github.com/gemini-cli-extensions/conductor
+    ref: conductor-v0.4.1
+
+  - name: gemini-cli-security
+    source: https://github.com/gemini-cli-extensions/security
+    ref: v0.5.0

@@ -1,28 +1,28 @@
 ---
 favorite_packages:
   - asdf                # asdf              — manages nodejs (for npm-based LSPs)
-  - git
-  - nushell
-  - fish
-  - helix
-  - fzf
   - atuin
+  - bat
   - eza
-  - tmux
-  - zellij
-  - lazygit
-  - python313-uv
-  - uv-zsh-completion
-  - python311
-  - python312
-  - python314
+  - fish
+  - fzf
   - gh
   - gh-zsh-completion
+  - git
+  - helix
+  - lazygit
+  - nushell
+  - podman
+  - python311
+  - python312
+  - python313-uv
+  - python314
   - starship
+  - tmux
+  - uv-zsh-completion
+  - zellij
   - zoxide
   - zsh
-  - gemini-cli
-  - bat
 
 osado_packages:
 # From the CONTRIBUTING.md
@@ -73,3 +73,6 @@ helix_npm_packages:
   - yaml-language-server
   - prettier
   - "@ansible/ansible-language-server"
+
+code_assist_zypper_packages:
+  - gemini-cli

@@ -57,6 +57,18 @@ Optional GPG commit signing: import your private key once.
 
 [asdf](https://asdf-vm.com/) managing: nodejs and zig
 
+### Code assistants
+
+| Tool | Notes |
+| ---- | ----- |
+| [gemini-cli](https://github.com/google-gemini/gemini-cli) | Google Gemini agent for the terminal; auth type configurable (see below) |
+| [opencode](https://opencode.ai/) | Terminal coding agent |
+| [claude-code](https://claude.ai/) | Anthropic's Claude coding agent |
+| [copilot](https://github.com/github/copilot-cli) | GitHub Copilot CLI |
+| [pi](https://pi.ai/) | Inflection AI terminal agent |
+
+All tools require an active subscription or API key. See the [Gemini CLI — authentication type](#gemini-cli--authentication-type) section for how to configure headless auth for gemini-cli.
+
 ### Other tools
 
 [lazygit](https://github.com/jesseduffield/lazygit), [uv](https://docs.astral.sh/uv/), Python 3.11 / 3.12 / 3.14.
@@ -115,6 +127,7 @@ defaults that work out of the box; drop one or more of the files below into
 | ----------------------------- | -------------------------------------------------------------- | ---------------- |
 | `gh_pat`                      | GitHub Personal Access Token (plain text, mode 0600)           | Ansible          |
 | `personal.yml`                | Ansible variable overrides (git name, email, signing key, etc.)| Ansible          |
+| `gemini_env`                  | gemini-cli environment file deployed as `~/.gemini/.env`       | Ansible          |
 | `gh_dash_config.yml`          | Full gh-dash config with your team-specific PR/issue sections  | Ansible          |
 | `make.env`                    | KVM host and VM name — single source of truth for `hostname` and `libvirt_uri`  | Make / OpenTofu  |
 | `gpg_private_key.asc`         | Exported GPG private key for signed commits (optional)         | Ansible          |
@@ -216,6 +229,97 @@ Ansible will:
 > **Note**: your public key must also be uploaded to your GitHub account at
 > <https://github.com/settings/gpg/new> for GitHub to show the "Verified" badge.
 > Export it with `gpg --armor --export YOURKEYID16HEX`.
+
+### Gemini CLI — authentication type
+
+The `gemini_auth_type` variable (defined in `vars/gemini.yml`) controls the
+`security.auth.selectedType` field written to `~/.gemini/settings.json` on the VM.
+
+| Value | When to use |
+| ----- | ----------- |
+| `oauth-personal` | Interactive OAuth via Google Account — opens a browser on first run; **default** |
+| `gemini-api-key` | API key from [Google AI Studio](https://aistudio.google.com/apikey); export `GEMINI_API_KEY` in the shell |
+| `vertex-ai` | Vertex AI / Google Cloud; set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` |
+| `compute-default-credentials` | Application Default Credentials (GCE, Cloud Shell, `gcloud auth application-default login`) |
+
+The default (`oauth-personal`) is fine for interactive use. For headless or
+service-account environments, override the value in `.secret/personal.yml`:
+
+```yaml
+gemini_auth_type: gemini-api-key
+```
+
+#### Environment variables — `.secret/gemini_env`
+
+gemini-cli reads `~/.gemini/.env` at startup and injects its contents into the
+process environment. This is the right place for credentials and project IDs that
+must not be committed to the repository.
+
+If `.secret/gemini_env` exists on the Ansible controller, Ansible will deploy it
+as `~/.gemini/.env` (mode 0600) on the VM. If the file is absent the task is
+skipped and no `.env` is created — gemini-cli starts without it.
+
+Create the file on the controller:
+
+```bash
+cat > .secret/gemini_env << 'EOF'
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF
+chmod 600 .secret/gemini_env
+```
+
+Or for API key auth:
+
+```bash
+cat > .secret/gemini_env << 'EOF'
+GEMINI_API_KEY=your-api-key-here
+EOF
+chmod 600 .secret/gemini_env
+```
+
+Re-run with the `code_assist` tag to apply:
+
+```bash
+uv run ansible-playbook -i inventory.ini playbook.yml --tags code_assist
+```
+
+#### Extensions
+
+gemini-cli supports [extensions](https://geminicli.com/docs/extensions/) —
+add-ons that provide extra agent skills, MCP servers, and custom commands.
+The playbook installs extensions listed in `gemini_extensions`
+(`vars/gemini.yml`) on the VM non-interactively.
+
+Default extensions:
+
+| Extension | Source | What it adds |
+| --------- | ------ | ------------ |
+| `code-review` | [gemini-cli-extensions/code-review](https://github.com/gemini-cli-extensions/code-review) | `/code-review` and `/pr-code-review` commands |
+| `conductor` | [gemini-cli-extensions/conductor](https://github.com/gemini-cli-extensions/conductor) | Orchestration agent for multi-step workflows |
+| `gemini-cli-security` | [gemini-cli-extensions/security](https://github.com/gemini-cli-extensions/security) | Security scanning, vulnerability patching, PoC generation |
+
+Extensions are installed only when their directory is missing from
+`~/.gemini/extensions/` on the VM — re-runs are idempotent.
+
+**Add an extension:** append an entry to `gemini_extensions` in
+`vars/gemini.yml`. Use `ref` to pin a release tag (omit for the default
+branch):
+
+```yaml
+gemini_extensions:
+  - name: my-extension
+    source: https://github.com/org/my-extension
+    ref: v1.0.0
+```
+
+**Upgrade an extension:** bump the `ref` in `vars/gemini.yml`, remove the
+extension directory on the VM, and re-run:
+
+```bash
+ssh devenv@<vm-ip> rm -rf ~/.gemini/extensions/conductor
+uv run ansible-playbook -i inventory.ini playbook.yml --tags code_assist
+```
 
 ### Variables
 

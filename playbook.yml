@@ -7,6 +7,7 @@
     - vars/github_binaries.yml
     - vars/gh.yml
     - vars/asdf_plugins.yml
+    - vars/gemini.yml
 
   pre_tasks:
     - name: Verify GitHub PAT secret file exists on controller
@@ -826,13 +827,16 @@
         - tmux
 
     # ── AI / Code-Assist tools ─────────────────────────────────────────────────
-    # gemini-cli: installed via zypper in the `packages` section (vars/packages.yml).
+    # gemini-cli: installed via zypper (openSUSE community package); settings.json
+    #   is deployed from templates/gemini_settings.json.j2.  The auth type is driven
+    #   by gemini_auth_type (vars/gemini.yml; override in .secret/personal.yml).
     # opencode + copilot: GitHub release binaries using the same idempotent version-
     #   sentinel pattern as the Helix LSP binaries above.
     # claude-code: official curl | bash installer (Anthropic's recommended method).
     #   Installs to ~/.claude/local/; PATH is configured via zshrc template.
     #
     # Requires active subscriptions / API keys for use:
+    #   gemini-cli   — Google account (oauth-personal) or GEMINI_API_KEY (gemini-api-key)
     #   claude-code  — Anthropic account or ANTHROPIC_API_KEY
     #   copilot      — active GitHub Copilot subscription
 
@@ -843,6 +847,102 @@
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: '0755'
+      tags:
+        - code_assist
+
+    # ── gemini-cli: install + configure ───────────────────────────────────────
+    # Installed via the openSUSE community zypper package.
+    # settings.json is deployed from a Jinja2 template so that auth.selectedType
+    # is configurable without editing tracked files.
+    # Default: oauth-personal (interactive browser flow).
+    # Override gemini_auth_type in .secret/personal.yml for headless environments.
+    #
+    # .env (optional): if .secret/gemini_env exists on the controller it is
+    # deployed as ~/.gemini/.env (mode 0600).  gemini-cli reads this file
+    # automatically and injects the listed variables into its environment —
+    # use it for GEMINI_API_KEY, GOOGLE_CLOUD_PROJECT, etc.
+
+    - name: Install gemini-cli via zypper
+      community.general.zypper:
+        name: "{{ code_assist_zypper_packages }}"
+        state: present
+      tags:
+        - code_assist
+
+    - name: Ensure ~/.gemini directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.gemini"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      tags:
+        - code_assist
+
+    - name: Deploy gemini-cli settings.json
+      ansible.builtin.template:
+        src: templates/gemini_settings.json.j2
+        dest: "/home/{{ ansible_user }}/.gemini/settings.json"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags:
+        - code_assist
+
+    - name: Check for gemini-cli .env secret on controller
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/.secret/gemini_env"
+      register: gemini_env_file
+      delegate_to: localhost
+      become: false
+      tags:
+        - code_assist
+
+    - name: Deploy gemini-cli .env if secret is present
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/.secret/gemini_env"
+        dest: "/home/{{ ansible_user }}/.gemini/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      when: gemini_env_file.stat.exists
+      no_log: true
+      tags:
+        - code_assist
+
+    # ── gemini-cli extensions ─────────────────────────────────────────────────
+    # Installed non-interactively with --consent --skip-settings.
+    # List driven by gemini_extensions in vars/gemini.yml.
+    # Idempotent: skips extensions whose directory already exists.
+    # To upgrade: bump the ref in vars/gemini.yml, remove the extension dir
+    # on the VM, and re-run with --tags code_assist.
+
+    - name: Check installed gemini-cli extensions
+      ansible.builtin.stat:
+        path: "/home/{{ ansible_user }}/.gemini/extensions/{{ item.name }}/gemini-extension.json"
+      loop: "{{ gemini_extensions }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: gemini_ext_check
+      tags:
+        - code_assist
+
+    - name: Install missing gemini-cli extensions
+      ansible.builtin.command:
+        cmd: >-
+          gemini extensions install {{ item.item.source }}
+          {{ '--ref ' ~ item.item.ref if item.item.ref is defined else '' }}
+          --consent --skip-settings
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+      loop: "{{ gemini_ext_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: not item.stat.exists
+      changed_when: true
       tags:
         - code_assist
 
