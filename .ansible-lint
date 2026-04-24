@@ -1,0 +1,32 @@
+---
+# ansible-lint configuration
+# https://docs.ansible.com/projects/lint/rules/
+#
+# Run:  uvx ansible-lint playbook.yml
+#   or: make ansible-lint
+#
+# Coverage:
+#   playbook.yml          — linted directly
+#   vars/*.yml            — followed automatically via vars_files:
+#   templates/*.j2        — followed automatically via ansible.builtin.template tasks;
+#                           jinja[invalid] and jinja[spacing] rules apply to them
+#
+# Templates and vars are NOT separate lint targets — ansible-lint reaches them
+# through the playbook's own references.
+
+profile: basic
+
+# Paths ansible-lint will never examine
+exclude_paths:
+  - .secret/
+  - inventory.ini
+  - host.auto.tfvars
+
+warn_list:
+  - experimental
+  - jinja[spacing]        # spacing around {{ }} in templates — style preference
+
+# NOTE: var_naming_pattern is intentionally absent.
+# The default pattern (^[a-z_][a-z0-9_]*$) already allows leading underscores,
+# so the _*_defaults convention (e.g. _git_defaults, _glab_defaults) is valid
+# without any override.

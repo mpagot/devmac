@@ -3,6 +3,7 @@ UV         ?= uv
 KVM_HOST   ?= root@your-kvm-host.example.com
 VM_NAME    ?= my-dev-vm
 VERBOSITY  ?=
+TAGS       ?=
 
 # Optional personal/company overrides (gitignored).
 # Example .secret/make.env:
@@ -122,10 +123,10 @@ ansible-galaxy-install:
 
 ## ansible-provision: Run the full configuration playbook against inventory.ini
 ansible-provision: ansible-galaxy-install
-	$(UV) run ansible-playbook -i inventory.ini playbook.yml $(VERBOSITY)
+	$(UV) run ansible-playbook -i inventory.ini playbook.yml $(if $(TAGS),--tags "$(TAGS)") $(VERBOSITY)
 
 ## ansible-lint: Lint the Ansible playbook with ansible-lint
-ansible-lint:
+ansible-lint: ansible-galaxy-install
 	$(UV) run ansible-lint playbook.yml
 
 # ── Linting ────────────────────────────────────────────────────────────────

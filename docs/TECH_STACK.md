@@ -569,7 +569,7 @@ private_ssh_keys_to_upload=["key1","key2"]
 ### Running Ansible
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml
+make ansible-provision
 ```
 
 The `uv run` prefix ensures the playbook runs inside the project's virtual

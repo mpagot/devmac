@@ -22,7 +22,7 @@ make clean                 # virsh undefine + tofu state rm (recover stuck domai
 
 `make lint` is the pre-commit check. Run subsets of the playbook with `--tags`:
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags gh,dotfiles
+make ansible-provision TAGS="gh,dotfiles"
 ```
 
 Available tags: `always`, `asdf`, `atuin`, `dotfiles`, `gh`, `gpg`, `helix`, `packages`, `shell`, `ssh_keys`, `tmux`, `update`.
