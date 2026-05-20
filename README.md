@@ -44,7 +44,7 @@ And in case you do not like zsh, you also get bash, fish and nu.
 | HCL / Terraform | `terraform-ls` | |
 | Multi-language | `prettier` | formatter, via npm |
 
-### Git and GitHub — `git` + `gh` + `gh-dash`
+### Git, GitHub and GitLab — `git` + `gh` + `glab`
 
 Global config with sane defaults (`init.defaultBranch = main`, `core.editor = hx`).
 Optional GPG commit signing: import your private key once.
@@ -52,6 +52,7 @@ Optional GPG commit signing: import your private key once.
 - `gh` CLI authenticated headlessly via PAT, configured as git credential helper
 - [gh-dash](https://github.com/dlvhdr/gh-dash) — terminal dashboard for PRs and issues
 - [gh-grep](https://github.com/k1LoW/gh-grep) — grep across GitHub repos from the CLI
+- `glab` CLI configured for multiple GitLab instances, with git credential helper wiring (tokens via `.secret/personal.yml`)
 
 ### Runtime version manager — asdf
 
@@ -68,6 +69,25 @@ Optional GPG commit signing: import your private key once.
 | [pi](https://pi.ai/) | Inflection AI terminal agent |
 
 All tools require an active subscription or API key. See the [Gemini CLI — authentication type](#gemini-cli--authentication-type) section for how to configure headless auth for gemini-cli.
+
+### Cloud CLIs
+
+| Tool | Install method | Notes |
+| ---- | -------------- | ----- |
+| [Google Cloud SDK](https://cloud.google.com/sdk) (`gcloud`) | `curl https://sdk.cloud.google.com \| bash` | zypper repo is broken on Tumbleweed; uses Python 3.13 |
+
+Auth is **not automated** — after provisioning, log in interactively:
+
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT
+```
+
+Re-run with the `cloud` tag:
+
+```bash
+make ansible-provision TAGS=cloud
+```
 
 ### Other tools
 
@@ -127,7 +147,6 @@ defaults that work out of the box; drop one or more of the files below into
 | ----------------------------- | -------------------------------------------------------------- | ---------------- |
 | `gh_pat`                      | GitHub Personal Access Token (plain text, mode 0600)           | Ansible          |
 | `personal.yml`                | Ansible variable overrides (git name, email, signing key, etc.)| Ansible          |
-| `gemini_env`                  | gemini-cli environment file deployed as `~/.gemini/.env`       | Ansible          |
 | `gh_dash_config.yml`          | Full gh-dash config with your team-specific PR/issue sections  | Ansible          |
 | `make.env`                    | KVM host and VM name — single source of truth for `hostname` and `libvirt_uri`  | Make / OpenTofu  |
 | `gpg_private_key.asc`         | Exported GPG private key for signed commits (optional)         | Ansible          |
@@ -143,8 +162,17 @@ variables such as `ssh_key`, `memory`, `vcpu`, and `disk_size`.
 **Example `.secret/personal.yml`:**
 
 ```yaml
-git_user_name: "Ada Lovelace"
-git_user_email: "ada@example.com"
+git:
+  user_name: "Ada Lovelace"
+  user_email: "ada@example.com"
+
+zypper:
+  repos:
+    - alias: corp-tools
+      name: Corporate Toolbox
+      url: http://packages.example.com/openSUSE_Tumbleweed/
+  packages:
+    - secret-coffee-brew-recipes
 ```
 
 **Example `.secret/make.env`:**
@@ -179,16 +207,105 @@ running `ansible-playbook` or `make ansible-provision`. The token is read by Ans
 via `vars/gh.yml` using `lookup('file', '.secret/gh_pat')` and is never written
 to Ansible logs (`no_log: true`).
 
+### GitLab CLI (`glab`) — multi-host configuration
+
+The playbook installs [glab](https://gitlab.com/gitlab-org/cli) (GitLab CLI) and
+deploys `~/.config/glab-cli/config.yml` from a Jinja2 template. Unlike `gh`
+(single host, single PAT), glab supports **multiple GitLab instances** — each
+with its own token, protocol, and username.
+
+Generic defaults live in `vars/glab.yml` (tracked); personal overrides and
+tokens go in `.secret/personal.yml` (gitignored). The playbook deep-merges
+both via `combine(recursive=True)`, so private/corporate hosts can be added
+entirely in the secret file.
+
+**How it works:**
+
+- `vars/glab.yml` ships `gitlab.com` with empty token/user as the only default host.
+- `.secret/personal.yml` overrides tokens and adds private instances.
+- The merged result is rendered into `config.yml` and `aliases.yml` on the VM.
+- Tokens are never written to Ansible logs (`no_log: true`).
+- No `glab auth login` command is run — the template handles everything.
+
+**Example `.secret/personal.yml` (glab section):**
+
+```yaml
+glab:
+  default_host: gitlab.example.com
+  hosts:
+    gitlab.com:
+      token: "glpat-xxxxxxxxxxxxxxxxxxxx"
+      user: "your-gitlab-username"
+    gitlab.example.com:
+      token: "glpat-yyyyyyyyyyyyyyyyyyyy"
+      api_host: gitlab.example.com
+      api_protocol: https
+      git_protocol: https
+      user: "your-username"
+```
+
+Each host entry supports these keys:
+
+| Key | Default | Description |
+| --- | ------- | ----------- |
+| `token` | `""` | GitLab Personal Access Token |
+| `user` | `""` | GitLab username |
+| `api_host` | same as hostname | API endpoint (if different from hostname) |
+| `api_protocol` | `https` | `https` or `http` |
+| `git_protocol` | inherits global | `ssh`, `https`, or `http` |
+
+The `default_host` key controls which GitLab instance glab targets by default
+(e.g. for `glab repo clone owner/repo`). Without it, glab defaults to
+`gitlab.com`.
+
+**HTTPS git credentials (credential helper):** Unlike `gh`, `glab` has no
+`auth setup-git` subcommand, and non-interactive login (`--token`) skips
+credential helper wiring entirely.  The playbook manually registers
+`glab auth git-credential` as the per-host credential helper in `~/.gitconfig`
+for every configured GitLab host.  This mirrors the pattern `gh auth setup-git`
+uses for GitHub — Git delegates to the CLI, which reads the token from its own
+config store at runtime.  Token rotation only requires updating the glab config;
+no gitconfig changes are needed.
+
+**Creating a GitLab PAT:**
+
+1. Go to your GitLab instance → **Preferences → Access Tokens**
+   (e.g. `https://gitlab.com/-/user_settings/personal_access_tokens`)
+2. Set a name and expiration date
+3. Select scopes: `api`, `read_user`, `read_repository`, `write_repository`
+4. Click **Create personal access token** and copy the value
+5. Add it to `.secret/personal.yml` under the matching hostname
+
+Re-run with the `glab` tag to apply:
+
+```bash
+make ansible-provision TAGS=glab
+```
+
+**Global settings** (editor, git protocol, aliases) can also be overridden in
+`.secret/personal.yml`:
+
+```yaml
+glab:
+  editor: vim
+  git_protocol: https
+  aliases:
+    co: mr checkout
+    ci: pipeline ci
+    mrs: mr list --assignee=@me
+```
+
 ### GPG commit signing
 
 To have every commit signed on the VM automatically, add the signing key ID
 and enable signing in `.secret/personal.yml`:
 
 ```yaml
-git_user_name: "Ada Lovelace"
-git_user_email: "ada@example.com"
-git_signing_key: "YOUR40CHARFINGERPRINT"
-git_gpg_sign: "true"
+git:
+  user_name: "Ada Lovelace"
+  user_email: "ada@example.com"
+  signing_key: "YOUR40CHARFINGERPRINT"
+  gpg_sign: "true"
 ```
 
 Find your key ID with:
@@ -232,7 +349,7 @@ Ansible will:
 
 ### Gemini CLI — authentication type
 
-The `gemini_auth_type` variable (defined in `vars/gemini.yml`) controls the
+The `gemini.auth_type` variable (defined in `vars/code_assist.yml`) controls the
 `security.auth.selectedType` field written to `~/.gemini/settings.json` on the VM.
 
 | Value | When to use |
@@ -243,53 +360,42 @@ The `gemini_auth_type` variable (defined in `vars/gemini.yml`) controls the
 | `compute-default-credentials` | Application Default Credentials (GCE, Cloud Shell, `gcloud auth application-default login`) |
 
 The default (`oauth-personal`) is fine for interactive use. For headless or
-service-account environments, override the value in `.secret/personal.yml`:
+service-account environments, you can override variables in `.secret/personal.yml`.
+
+#### Environment variables and overrides
+
+All Code Assist overrides (Gemini and Claude) are consolidated into `.secret/personal.yml` using structured dictionaries:
 
 ```yaml
-gemini_auth_type: gemini-api-key
+# .secret/personal.yml
+gemini:
+  auth_type: gemini-api-key
+  tools_sandbox: podman  # Optional: "podman", "docker", or ""
+  env:
+    GEMINI_API_KEY: "your-api-key-here"
+    GOOGLE_CLOUD_PROJECT: "your-project-id"
+
+claude:
+  env:
+    CLAUDE_CODE_USE_VERTEX: "1"
+    CLOUD_ML_REGION: "global"
+    ANTHROPIC_VERTEX_PROJECT_ID: "your-project-id"
 ```
 
-#### Environment variables — `.secret/gemini_env`
-
-gemini-cli reads `~/.gemini/.env` at startup and injects its contents into the
-process environment. This is the right place for credentials and project IDs that
-must not be committed to the repository.
-
-If `.secret/gemini_env` exists on the Ansible controller, Ansible will deploy it
-as `~/.gemini/.env` (mode 0600) on the VM. If the file is absent the task is
-skipped and no `.env` is created — gemini-cli starts without it.
-
-Create the file on the controller:
-
-```bash
-cat > .secret/gemini_env << 'EOF'
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=us-central1
-EOF
-chmod 600 .secret/gemini_env
-```
-
-Or for API key auth:
-
-```bash
-cat > .secret/gemini_env << 'EOF'
-GEMINI_API_KEY=your-api-key-here
-EOF
-chmod 600 .secret/gemini_env
-```
+The `gemini.env` dictionary is deployed as `~/.gemini/.env` (mode 0600) on the VM. gemini-cli reads this file automatically and injects the listed variables into its environment.
 
 Re-run with the `code_assist` tag to apply:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags code_assist
+make ansible-provision TAGS=code_assist
 ```
 
 #### Extensions
 
 gemini-cli supports [extensions](https://geminicli.com/docs/extensions/) —
 add-ons that provide extra agent skills, MCP servers, and custom commands.
-The playbook installs extensions listed in `gemini_extensions`
-(`vars/gemini.yml`) on the VM non-interactively.
+The playbook installs extensions listed in `gemini.extensions`
+(`vars/code_assist.yml`) on the VM non-interactively.
 
 Default extensions:
 
@@ -302,23 +408,46 @@ Default extensions:
 Extensions are installed only when their directory is missing from
 `~/.gemini/extensions/` on the VM — re-runs are idempotent.
 
-**Add an extension:** append an entry to `gemini_extensions` in
-`vars/gemini.yml`. Use `ref` to pin a release tag (omit for the default
+**Add an extension:** append an entry to `gemini.extensions` in
+`vars/code_assist.yml`. Use `ref` to pin a release tag (omit for the default
 branch):
 
 ```yaml
-gemini_extensions:
-  - name: my-extension
-    source: https://github.com/org/my-extension
-    ref: v1.0.0
+_gemini_defaults:
+  # ...
+  extensions:
+    - name: my-extension
+      source: https://github.com/org/my-extension
+      ref: v1.0.0
 ```
 
-**Upgrade an extension:** bump the `ref` in `vars/gemini.yml`, remove the
+**Upgrade an extension:** bump the `ref` in `vars/code_assist.yml`, remove the
 extension directory on the VM, and re-run:
 
 ```bash
 ssh devenv@<vm-ip> rm -rf ~/.gemini/extensions/conductor
-uv run ansible-playbook -i inventory.ini playbook.yml --tags code_assist
+make ansible-provision TAGS=code_assist
+```
+
+### Claude Code — environment variables
+
+The playbook creates a `~/.claude/settings.json` file on the VM. You can inject environment variables into this file by defining the `claude.env` dictionary in `.secret/personal.yml` (as shown above). By default, `claude.env` is empty and no `"env"` block is rendered in `settings.json`.
+
+The `permissions.defaultMode` setting is hardcoded to `"default"`.
+
+Example `.secret/personal.yml`:
+```yaml
+claude:
+  env:
+    CLAUDE_CODE_USE_VERTEX: "1"
+    CLOUD_ML_REGION: "global"
+    ANTHROPIC_VERTEX_PROJECT_ID: "your-project-id"
+```
+
+Re-run with the `code_assist` tag to apply:
+
+```bash
+make ansible-provision TAGS=code_assist
 ```
 
 ### Variables
@@ -397,11 +526,11 @@ To increase Ansible verbosity for troubleshooting, pass the `VERBOSITY` variable
 make ansible-provision VERBOSITY=-vvv
 ```
 
-To run only a subset of tasks without reprovisioning the entire VM, use `--tags`:
+To run only a subset of tasks without reprovisioning the entire VM, use the `TAGS` variable:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags gh
-uv run ansible-playbook -i inventory.ini playbook.yml --tags gpg
+make ansible-provision TAGS=gh
+make ansible-provision TAGS=gpg
 ```
 
 ### Connect to the VM
@@ -470,7 +599,43 @@ favorite_packages:
 Re-run with the `packages` tag to apply without full reprovisioning:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags packages
+make ansible-provision TAGS=packages
+```
+
+### Add personal zypper repositories and packages
+
+Some packages live in non-standard repos (e.g. internal tooling, org-specific
+utilities). Instead of adding these to the tracked `vars/packages.yml`, use
+the `zypper` section in `.secret/personal.yml` to keep org-specific repos
+out of version control.
+
+```yaml
+# .secret/personal.yml
+zypper:
+  repos:
+    - alias: corp-tools
+      name: Corporate Toolbox
+      url: http://packages.example.com/openSUSE_Tumbleweed/
+  packages:
+    - secret-coffee-brew-recipes
+```
+
+Each repo entry supports:
+
+| Key | Required | Default | Description |
+| --- | -------- | ------- | ----------- |
+| `alias` | yes | — | Short identifier for `zypper ar` |
+| `url` | yes | — | Repository URI |
+| `name` | no | same as `alias` | Human-readable description |
+| `auto_import_keys` | no | `true` | Auto-import the repo's GPG signing key |
+
+Personal repos and packages are added **before** `favorite_packages`, so they
+can provide dependencies (like CA certificates) that later tasks need.
+
+Re-run with the `packages` tag:
+
+```bash
+make ansible-provision TAGS=packages
 ```
 
 ### Add a runtime version via asdf
@@ -492,7 +657,7 @@ asdf_plugins:
 Re-run with the `asdf` tag:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags asdf
+make ansible-provision TAGS=asdf
 ```
 
 ### Add shell aliases or functions
@@ -508,7 +673,7 @@ alias k='kubectl'
 Re-run with the `dotfiles` tag:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags dotfiles
+make ansible-provision TAGS=dotfiles
 ```
 
 ### Tune shell history (atuin)
@@ -525,5 +690,5 @@ Edit `files/atuin_config.toml`. The most useful knobs:
 Re-run with the `atuin` tag:
 
 ```bash
-uv run ansible-playbook -i inventory.ini playbook.yml --tags atuin
+make ansible-provision TAGS=atuin
 ```

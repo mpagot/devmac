@@ -4,31 +4,33 @@
 # Never commit .secret/ to version control.
 gh_pat: "{{ lookup('file', '.secret/gh_pat') }}"
 
-# ── gh config.yml settings ────────────────────────────────────────────────────
-gh_git_protocol: https
-gh_editor: hx
+_gh_defaults:
+  # ── gh config.yml settings ────────────────────────────────────────────────────
+  git_protocol: https
+  editor: hx
 
-# ── gh extensions ─────────────────────────────────────────────────────────────
-gh_extensions:
-  - name: dash
-    repo: dlvhdr/gh-dash
-  - name: grep
-    repo: k1LoW/gh-grep
+  # ── GitHub username (used in shell aliases, e.g. ghsync, gh_pr) ───────────────
+  # Override in .secret/personal.yml with your real GitHub login.
+  username: "your-github-username"
 
-# ── git global config ─────────────────────────────────────────────────────────
-git_user_name: "Your Name"
-git_user_email: "you@example.com"
-git_editor: hx
-git_default_branch: main
+  # ── gh extensions ─────────────────────────────────────────────────────────────
+  extensions:
+    - name: dash
+      repo: dlvhdr/gh-dash
+    - name: grep
+      repo: k1LoW/gh-grep
 
-# ── GPG commit signing (optional) ─────────────────────────────────────────────
-# Set git_signing_key to your GPG key ID and git_gpg_sign to "true" to enable
-# signed commits globally on the VM.  Also place your exported private key at
-# .secret/gpg_private_key.asc (see README for instructions).
-# Override both in .secret/personal.yml with your real values.
-git_signing_key: ""
-git_gpg_sign: "false"
+_git_defaults:
+  # ── git global config ─────────────────────────────────────────────────────────
+  user_name: "Your Name"
+  user_email: "you@example.com"
+  editor: hx
+  default_branch: main
 
-# ── GitHub username (used in shell aliases, e.g. ghsync, gh_pr) ───────────────
-# Override in .secret/personal.yml with your real GitHub login.
-gh_username: "your-github-username"
+  # ── GPG commit signing (optional) ─────────────────────────────────────────────
+  # Set signing_key to your GPG key ID and gpg_sign to "true" to enable
+  # signed commits globally on the VM.  Also place your exported private key at
+  # .secret/gpg_private_key.asc (see README for instructions).
+  # Override both in .secret/personal.yml with your real values.
+  signing_key: ""
+  gpg_sign: "false"

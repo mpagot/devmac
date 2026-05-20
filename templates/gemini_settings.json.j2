@@ -3,11 +3,14 @@
   "security": {
     "disableYoloMode": true,
     "auth": {
-      "selectedType": "{{ gemini_auth_type }}"
+      "selectedType": "{{ gemini.auth_type }}"
     }
   },
   "general": {
     "previewFeatures": true,
     "enableAutoUpdate": false
-  }
+  }{% if gemini.tools_sandbox %},
+  "tools": {
+    "sandbox": "{{ gemini.tools_sandbox }}"
+  }{% endif %}
 }

@@ -1,25 +1,43 @@
 ---
+# ── Personal zypper repos and packages (override in .secret/personal.yml) ─────
+# repos:    list of dicts with alias, name, url, auto_import_keys
+# packages: list of package names to install from those repos
+_zypper_defaults:
+  repos: []
+  packages: []
+  rpm_urls: []
+
 favorite_packages:
   - asdf                # asdf              — manages nodejs (for npm-based LSPs)
   - atuin
   - bat
+  - diffutils
   - eza
   - fish
   - fzf
+  - gcc
+  - gcc-c++
   - gh
   - gh-zsh-completion
   - git
+  - glab
+  - glab-bash-completion
+  - glab-fish-completion
+  - glab-zsh-completion
   - helix
   - lazygit
+  - make
   - nushell
   - podman
   - python311
   - python312
+  - python313              # python313           — interpreter for gcloud SDK (CLOUDSDK_PYTHON)
   - python313-uv
   - python314
   - starship
   - tmux
   - uv-zsh-completion
+  - which               # which             — standalone /usr/bin/which (gcloud installer needs it)
   - zellij
   - zoxide
   - zsh

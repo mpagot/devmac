@@ -572,8 +572,10 @@ private_ssh_keys_to_upload=["key1","key2"]
 make ansible-provision
 ```
 
-The `uv run` prefix ensures the playbook runs inside the project's virtual
-environment with all dependencies available (see [§9](#9-python-tooling-uv)).
+The `make` target invokes `uv run ansible-playbook -i inventory.ini playbook.yml`
+inside the project's virtual environment with all dependencies available
+(see [§9](#9-python-tooling-uv)). Use `uv run ansible-playbook` directly only
+when you need to pass flags not supported by the Makefile (e.g. `-e` extra vars).
 
 ---
 
@@ -803,6 +805,61 @@ The Ansible task:
 effect (running it twice produces the same `~/.gitconfig` entries) but the
 command always exits 0 with no output to distinguish a change from a no-op.
 
+### git credential helper: `glab auth git-credential`
+
+Unlike `gh`, `glab` has no `auth setup-git` subcommand. Non-interactive login
+(`glab auth login --token`) stores the token in `~/.config/glab-cli/config.yml`
+but **skips credential helper wiring entirely**. The playbook replicates the
+effect manually: for each configured GitLab host, it writes the same two-entry
+`credential.helper` pattern into `~/.gitconfig` via `git config --global`:
+
+```ini
+[credential "https://gitlab.example.com"]
+    helper =
+    helper = !/usr/bin/glab auth git-credential
+```
+
+The semantics are identical to the `gh` pattern above: the blank `helper =`
+severs the chain to prevent stale or system-wide helpers from interfering, and
+`!/usr/bin/glab auth git-credential` delegates to the `glab` binary, which
+reads the token for the matching host from its own config store at runtime.
+
+Because the credential helper points to the **binary** (not a token), token
+rotation only requires updating `glab`'s config (via `glab auth login` or
+re-deploying the template); no `~/.gitconfig` changes are needed.
+
+The Ansible task loops over `glab.hosts` and runs three `git config` commands
+per host:
+
+```yaml
+- name: Wire glab as git credential helper for GitLab hosts
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      git config --global --unset-all 'credential.https://{{ hostname }}.helper' 2>/dev/null || true
+      git config --global 'credential.https://{{ hostname }}.helper' ''
+      git config --global --add 'credential.https://{{ hostname }}.helper' \
+        '!/usr/bin/glab auth git-credential'
+    executable: /bin/bash
+  become_user: "{{ ansible_user }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  loop: "{{ glab.hosts.keys() | list }}"
+  loop_control:
+    loop_var: hostname
+  changed_when: false
+```
+
+The `--unset-all` + set + `--add` sequence is idempotent: it clears any
+existing entries for the host before writing the canonical pair, so re-running
+the playbook produces the same result regardless of prior state.
+
+**Previous approach (removed):** Earlier versions of this playbook deployed a
+`~/.netrc` file with GitLab credentials. This was replaced by the credential
+helper approach because `.netrc` duplicated tokens (in both glab config and
+netrc), could leak credentials to non-git tools (e.g. `curl`), and did not
+follow the same delegation pattern used for GitHub.
+
 ### `gh` configuration file: `~/.config/gh/config.yml`
 
 Separate from authentication, `gh` reads its general configuration from
@@ -1004,7 +1061,7 @@ VM-local commands already in atuin's database are not affected.
 ### Overriding the source history file
 
 By default the task uses `~/.zsh_history` (controller home directory). To specify
-a different file:
+a different file, pass `-e` directly (the Makefile does not support extra vars):
 
 ```bash
 uv run ansible-playbook -i inventory.ini playbook.yml \

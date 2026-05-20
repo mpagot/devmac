@@ -25,7 +25,7 @@ make clean                 # virsh undefine + tofu state rm (recover stuck domai
 make ansible-provision TAGS="gh,dotfiles"
 ```
 
-Available tags: `always`, `asdf`, `atuin`, `dotfiles`, `gh`, `gpg`, `helix`, `packages`, `shell`, `ssh_keys`, `tmux`, `update`.
+Available tags: `always`, `asdf`, `atuin`, `cloud`, `code_assist`, `dotfiles`, `gh`, `gh_extensions`, `git_config`, `glab`, `gpg`, `helix`, `osado`, `packages`, `shell`, `ssh_keys`, `tmux`, `update`.
 
 ## File Layout
 
@@ -33,9 +33,9 @@ Available tags: `always`, `asdf`, `atuin`, `dotfiles`, `gh`, `gpg`, `helix`, `pa
 |---|---|
 | `main.tf` / `variables.tf` / `output.tf` | OpenTofu infra (libvirt provider, cloud-init ISO, domain) |
 | `playbook.yml` | Single Ansible playbook, all tasks inline (no roles) |
-| `vars/` | Ansible variable files (`packages.yml`, `gh.yml`, `asdf_plugins.yml`, `helix_github_binaries.yml`) |
+| `vars/` | Ansible variable files (`packages.yml`, `gh.yml`, `glab.yml`, `asdf_plugins.yml`, `github_binaries.yml`, `code_assist.yml`) |
 | `files/` | Static configs deployed via `copy` (atuin, helix, starship, tmux, gh-dash) |
-| `templates/` | Jinja2 templates deployed via `template` (`zshrc.j2`, `gh_config.yml.j2`) |
+| `templates/` | Jinja2 templates deployed via `template` (`zshrc.j2`, `gh_config.yml.j2`, `glab_config.yml.j2`, `glab_aliases.yml.j2`, `gemini_settings.json.j2`, `claude_settings.json.j2`, `gemini_env.j2`) |
 | `docs/TECH_STACK.md` | Deep rationale on infra, provider behaviour, and tooling decisions |
 
 ## Secrets — `.secret/` Override Pattern
@@ -45,7 +45,7 @@ Available tags: `always`, `asdf`, `atuin`, `dotfiles`, `gh`, `gpg`, `helix`, `pa
 | File | Purpose | Consumer |
 |---|---|---|
 | `make.env` | `KVM_HOST` and `VM_NAME` — single source of truth | Makefile → `host.auto.tfvars` |
-| `personal.yml` | Ansible var overrides (git name, email, signing key) | `playbook.yml` `include_vars` |
+| `personal.yml` | Ansible var overrides (nested dicts: `git`, `gh`, `glab`, `gemini`, `claude`, `zypper`) | `playbook.yml` `include_vars` |
 | `gh_pat` | GitHub PAT for headless `gh` auth | Ansible `lookup('file')` |
 | `gh_dash_config.yml` | Full gh-dash config with team-specific filters | `playbook.yml` conditional `copy` |
 | `gpg_private_key.asc` | GPG private key for signed commits (optional) | `playbook.yml` GPG block (tag `gpg`) |
@@ -54,6 +54,7 @@ Available tags: `always`, `asdf`, `atuin`, `dotfiles`, `gh`, `gpg`, `helix`, `pa
 
 ## Critical Constraints
 
+- **Nested Dictionary Overrides:** `playbook.yml` uses `combine(recursive=True)` in `pre_tasks` to deep-merge personal overrides (like `git:` or `gemini:`) into base defaults (e.g. `_git_defaults`). If adding new personal config, follow this pattern instead of adding flat variables.
 - **Binary is `tofu`:** The Makefile variable is `$(TOFU)`. No OpenTofu-specific features are used; `terraform` would also work, but all scripts expect `tofu`.
 - **`uv run` prefix:** Ansible and linters are not globally installed. Always use `uv run` (or `make`, which does this).
 - **`inventory.ini` is generated:** Created by `make ansible-update-inventory` (called by `tofu-deploy`). Do not create or edit manually.

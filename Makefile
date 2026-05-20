@@ -16,7 +16,7 @@ LIBVIRT_URI = qemu+ssh://$(KVM_HOST)/system
 
 .PHONY: \
 	tofu-init tofu-validate tofu-format tofu-deploy tofu-destroy tofu-clean-state \
-	virsh-list virsh-get-ip virsh-clean-domain \
+	virsh-list virsh-get-ip virsh-clean-domain virsh-shutdown virsh-start virsh-snapshot-daily \
 	ansible-update-inventory ansible-galaxy-install ansible-provision ansible-lint \
 	yaml-lint lint \
 	clean
@@ -87,6 +87,55 @@ virsh-get-ip:
 ##   succeeded but start failed)
 virsh-clean-domain:
 	ssh $(KVM_HOST) "virsh destroy '$(VM_NAME)' 2>/dev/null; virsh undefine '$(VM_NAME)' --nvram" || true
+
+## virsh-shutdown: Gracefully shut down the VM and wait until it stops.
+##   No-ops if the VM is already stopped.
+##   First tries a clean OS-level shutdown via Ansible (uses inventory.ini,
+##   10s SSH connect timeout); falls back to virsh ACPI shutdown if the VM
+##   is unreachable over SSH.
+virsh-shutdown:
+	@STATE=$$(ssh $(KVM_HOST) "virsh domstate '$(VM_NAME)' 2>/dev/null"); \
+	if [ "$$STATE" = "shut off" ]; then \
+	  echo "$(VM_NAME) is already stopped."; \
+	else \
+	  echo "Attempting clean shutdown via Ansible..."; \
+	  $(UV) run ansible -i inventory.ini dev_vm -T 10 \
+	    -m community.general.shutdown -a "delay=0" -b \
+	    || { echo "Ansible unreachable, falling back to virsh shutdown..."; \
+	         ssh $(KVM_HOST) "virsh shutdown '$(VM_NAME)'"; }; \
+	  echo "Waiting for $(VM_NAME) to stop..."; \
+	  for i in $$(seq 1 30); do \
+	    STATE=$$(ssh $(KVM_HOST) "virsh domstate '$(VM_NAME)' 2>/dev/null"); \
+	    [ "$$STATE" = "shut off" ] && { echo "$(VM_NAME) is stopped."; break; }; \
+	    sleep 2; \
+	  done; \
+	  STATE=$$(ssh $(KVM_HOST) "virsh domstate '$(VM_NAME)' 2>/dev/null"); \
+	  [ "$$STATE" = "shut off" ] || { echo "WARNING: $(VM_NAME) did not stop within 60s" >&2; exit 1; }; \
+	fi
+
+## virsh-start: Start the VM. No-ops if already running.
+virsh-start:
+	@STATE=$$(ssh $(KVM_HOST) "virsh domstate '$(VM_NAME)' 2>/dev/null"); \
+	if [ "$$STATE" = "running" ]; then \
+	  echo "$(VM_NAME) is already running."; \
+	else \
+	  ssh $(KVM_HOST) "virsh start '$(VM_NAME)'"; \
+	fi
+
+## virsh-snapshot-daily: Stop the VM and create date-stamped qcow2 backups in the pool directory.
+##   Backs up both the OS disk and the encrypted /home volume (if present).
+##   Use virsh-start afterwards to bring the VM back up.
+virsh-snapshot-daily: virsh-shutdown
+	ssh $(KVM_HOST) " \
+	  STAMP=\$$(date +%Y-%m-%d); \
+	  OS_BAK=/var/lib/libvirt/images/$(VM_NAME).qcow2.\$${STAMP}.bak; \
+	  HOME_BAK=/var/lib/libvirt/images/$(VM_NAME)-home.qcow2.\$${STAMP}.bak; \
+	  echo \"Creating snapshot: \$${STAMP}\"; \
+	  cp -a /var/lib/libvirt/images/$(VM_NAME).qcow2 \$${OS_BAK} && \
+	  echo \"  OS disk: \$${OS_BAK} (\$$(du -sh \$${OS_BAK} | cut -f1))\"; \
+	  cp -a /var/lib/libvirt/images/$(VM_NAME)-home.qcow2 \$${HOME_BAK} 2>/dev/null && \
+	  echo \"  Home volume: \$${HOME_BAK} (\$$(du -sh \$${HOME_BAK} | cut -f1))\" || \
+	  echo \"  Home volume not present, skipped.\""
 
 # ── Ansible ────────────────────────────────────────────────────────────────
 

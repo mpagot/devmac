@@ -1,0 +1,49 @@
+---
+# ── glab (GitLab CLI) defaults ────────────────────────────────────────────────
+# Override any key in .secret/personal.yml under the `glab:` dict.
+# Private/corporate hosts (with tokens) should be added entirely in
+# .secret/personal.yml — only generic public hosts belong here.
+#
+# Example .secret/personal.yml entry:
+#
+#   glab:
+#     default_host: gitlab.suse.de
+#     hosts:
+#       gitlab.com:
+#         token: "glpat-xxxxxxxxxxxxxxxxxxxx"
+#         user: "your-username"
+#       gitlab.suse.de:
+#         token: "glpat-xxxxxxxxxxxxxxxxxxxx"
+#         api_host: gitlab.suse.de
+#         api_protocol: https
+#         git_protocol: https
+#         user: "your-username"
+
+_glab_defaults:
+  # ── Global settings ──────────────────────────────────────────────────────────
+  # default_host: which GitLab instance glab targets when it cannot determine
+  # the host from context (e.g. `glab repo clone owner/repo`).
+  # Override in .secret/personal.yml for self-hosted instances.
+  default_host: gitlab.com
+  git_protocol: ssh
+  editor: hx
+  browser: ""
+  glamour_style: dark
+  check_update: false
+  display_hyperlinks: false
+
+  # ── Aliases ──────────────────────────────────────────────────────────────────
+  aliases:
+    co: mr checkout
+    ci: pipeline ci
+
+  # ── Per-host configuration ───────────────────────────────────────────────────
+  # Tokens are empty by default — set them in .secret/personal.yml.
+  # Additional (private) hosts should be added there as well.
+  hosts:
+    gitlab.com:
+      api_protocol: https
+      api_host: gitlab.com
+      git_protocol: ssh
+      token: ""
+      user: ""

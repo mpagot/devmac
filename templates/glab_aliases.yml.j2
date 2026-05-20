@@ -1,0 +1,5 @@
+# Managed by Ansible — do not edit manually.
+# Source: templates/glab_aliases.yml.j2 / vars/glab.yml
+{% for alias, command in glab.aliases.items() %}
+{{ alias }}: {{ command }}
+{% endfor %}
