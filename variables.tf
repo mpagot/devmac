@@ -64,6 +64,12 @@ variable "disk_size" {
   default     = 21474836480 # 20GB
 }
 
+variable "home_disk_size" {
+  description = "Size of the encrypted /home volume in bytes (LUKS-on-vdb, see ideas/DISK_CRYPT.md)"
+  type        = number
+  default     = 53687091200 # 50 GiB — matches OS disk; 16 GiB current /home/devenv has years of headroom
+}
+
 variable "memory" {
   description = "Memory for the VM in MB"
   type        = number

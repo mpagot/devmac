@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "defaultMode": "default"
+  }{% if claude.env | default({}) %},
+  "env": {{ claude.env | to_nice_json(indent=2) }}
+{% endif %}
+}

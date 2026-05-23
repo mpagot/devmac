@@ -113,6 +113,18 @@ resource "libvirt_volume" "disk" {
   }
 }
 
+# Encrypted /home volume — LUKS2 + ext4 lives inside this qcow2.
+# Attached to the domain as /dev/vdb. See ideas/DISK_CRYPT.md.
+resource "libvirt_volume" "home" {
+  name = "${var.hostname}-home.qcow2"
+  pool = var.libvirt_pool
+  target = {
+    format = { type = "qcow2" }
+  }
+  capacity = var.home_disk_size
+  # No backing_store — fresh blank volume, formatted as LUKS by Ansible.
+}
+
 # --- Domain ---
 
 resource "libvirt_domain" "domain" {
@@ -157,6 +169,23 @@ resource "libvirt_domain" "domain" {
         }
         target = {
           dev = "vda"
+          bus = "virtio"
+        }
+      },
+      # Encrypted /home — LUKS2 + ext4, configured by Ansible (see DISK_CRYPT.md).
+      {
+        driver = {
+          name = "qemu"
+          type = "qcow2"
+        }
+        source = {
+          volume = {
+            pool   = var.libvirt_pool
+            volume = libvirt_volume.home.name
+          }
+        }
+        target = {
+          dev = "vdb"
           bus = "virtio"
         }
       },
@@ -224,8 +253,15 @@ resource "libvirt_domain" "domain" {
   #  - os.firmware: provider sends "efi" but reads back null
   #  - devices consoles pty.path: "" becomes "/dev/pts/N" at runtime
   # See PROVIDER_ISSUES.md Issues 1 and 7. Remove when provider is fixed.
+  #
+  # NOTE: narrowed from `[os, devices]` to `[os]` to allow new disks (e.g. the
+  # encrypted /home volume on /dev/vdb, see ideas/DISK_CRYPT.md) to actually
+  # attach via tofu apply. The trade-off is that consoles/interfaces/etc.
+  # provider read-back bugs may now show as plan diffs — accept the noise, or
+  # add specific paths back (e.g. `devices.consoles, devices.interfaces`) if
+  # any of them produce a destructive in-place update.
   lifecycle {
-    ignore_changes = [os, devices]
+    ignore_changes = [os]
   }
 
   provisioner "local-exec" {

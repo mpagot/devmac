@@ -1,0 +1,22 @@
+# Managed by Ansible — do not edit manually.
+# Source: templates/glab_config.yml.j2 / vars/glab.yml
+host: {{ glab.default_host }}
+git_protocol: {{ glab.git_protocol }}
+editor: {{ glab.editor | default('') }}
+browser: {{ glab.browser | default('') }}
+glamour_style: {{ glab.glamour_style }}
+check_update: {{ glab.check_update | lower }}
+display_hyperlinks: {{ glab.display_hyperlinks | lower }}
+hosts:
+{% for hostname, host in glab.hosts.items() %}
+    {{ hostname }}:
+        api_protocol: {{ host.api_protocol | default('https') }}
+        api_host: {{ host.api_host | default(hostname) }}
+        git_protocol: {{ host.git_protocol | default(glab.git_protocol) }}
+{% if host.token | default('') != '' %}
+        token: {{ host.token }}
+{% endif %}
+{% if host.user | default('') != '' %}
+        user: {{ host.user }}
+{% endif %}
+{% endfor %}

@@ -6,8 +6,9 @@
     - vars/packages.yml
     - vars/github_binaries.yml
     - vars/gh.yml
+    - vars/glab.yml
     - vars/asdf_plugins.yml
-    - vars/gemini.yml
+    - vars/code_assist.yml
 
   pre_tasks:
     - name: Verify GitHub PAT secret file exists on controller
@@ -31,7 +32,7 @@
 
     # ── Optional personal overrides ────────────────────────────────────────
     # If .secret/personal.yml exists on the controller, load it to override
-    # generic defaults (e.g. git_user_name, git_user_email) from vars/gh.yml.
+    # generic defaults (e.g. git.user_name, git.user_email) from vars/gh.yml.
     # See README.md § "Personal and company overrides" for details.
 
     - name: Check for personal variable overrides
@@ -50,12 +51,144 @@
       tags:
         - always
 
+    - name: Merge personal git overrides into defaults
+      ansible.builtin.set_fact:
+        git: "{{ _git_defaults | combine(git | default({}), recursive=True) }}"
+      tags:
+        - always
+
+    - name: Merge personal gh overrides into defaults
+      ansible.builtin.set_fact:
+        gh: "{{ _gh_defaults | combine(gh | default({}), recursive=True) }}"
+      tags:
+        - always
+
+    - name: Merge personal gemini overrides into defaults
+      ansible.builtin.set_fact:
+        gemini: "{{ _gemini_defaults | combine(gemini | default({}), recursive=True) }}"
+      tags:
+        - always
+
+    - name: Merge personal claude overrides into defaults
+      ansible.builtin.set_fact:
+        claude: "{{ _claude_defaults | combine(claude | default({}), recursive=True) }}"
+      tags:
+        - always
+
+    - name: Merge personal glab overrides into defaults
+      ansible.builtin.set_fact:
+        glab: "{{ _glab_defaults | combine(glab | default({}), recursive=True) }}"
+      tags:
+        - always
+
+    - name: Merge personal zypper overrides into defaults
+      ansible.builtin.set_fact:
+        zypper: "{{ _zypper_defaults | combine(zypper | default({}), recursive=True) }}"
+      tags:
+        - always
+
   tasks:
     - name: Ping my hosts
       ansible.builtin.ping:
 
     - name: Gather facts
       ansible.builtin.gather_facts:
+
+    # ── Personal zypper repos and packages ─────────────────────────────────────
+    # Runs before favorite_packages so that packages from custom repos (e.g.
+    # internal CA certificates) are available to all later tasks.  Both lists
+    # are empty by default; populate them in .secret/personal.yml under the
+    # `zypper:` key.
+    #
+    # We use `zypper ar --no-refresh` instead of community.general.zypper_repository
+    # because the module always validates the repo URL on add — which fails if
+    # the repo is only reachable after a VPN/route is configured later.
+    # The --no-refresh flag registers the repo without contacting it; zypper
+    # will refresh automatically when the next install command runs.
+
+    - name: Add personal zypper repositories  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: >-
+          zypper --non-interactive addrepo --no-refresh --check
+          {{ '--no-gpgcheck' if not (item.auto_import_keys | default(true)) else '' }}
+          --name '{{ item.name | default(item.alias) }}'
+          '{{ item.url }}' '{{ item.alias }}'
+      loop: "{{ zypper.repos }}"
+      loop_control:
+        label: "{{ item.alias }}"
+      register: zypper_ar
+      changed_when: zypper_ar.rc == 0
+      failed_when: zypper_ar.rc != 0 and 'already exists' not in (zypper_ar.stderr | default(''))
+      when: zypper.repos | length > 0
+      tags:
+        - packages
+
+    - name: Import GPG keys for personal zypper repositories
+      ansible.builtin.command:
+        cmd: >-
+          zypper --non-interactive --gpg-auto-import-keys refresh '{{ item.alias }}'
+      loop: "{{ zypper.repos }}"
+      loop_control:
+        label: "{{ item.alias }}"
+      when: zypper.repos | length > 0 and (item.auto_import_keys | default(true))
+      register: zypper_refresh
+      changed_when: zypper_refresh.rc == 0
+      ignore_errors: true
+      tags:
+        - packages
+
+    - name: Warn about failed zypper GPG key refreshes
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: zypper refresh failed for '{{ item.item.alias }}'
+          (rc={{ item.rc }}) — repo may be unreachable.
+          stderr: {{ item.stderr | default('(none)') }}
+      loop: "{{ zypper_refresh.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.alias }}"
+      when:
+        - zypper_refresh is defined
+        - item.rc is defined
+        - item.rc != 0
+      tags:
+        - packages
+
+    - name: Install personal zypper packages
+      community.general.zypper:
+        name: "{{ zypper.packages }}"
+        state: present
+        disable_gpg_check: true
+      when: zypper.packages | length > 0
+      tags:
+        - packages
+
+    # ── RPMs installed directly from URL (no repo required) ────────────────────
+    # Used for packages whose repo is not always reachable (e.g. SUSE internal CA
+    # certs).  URLs live in .secret/personal.yml under zypper.rpm_urls (list of
+    # strings).  validate_certs: false is intentional — downloading CA cert RPMs
+    # over HTTPS requires the very certs we are installing.
+
+    - name: Download RPMs from personal URLs
+      ansible.builtin.get_url:
+        url: "{{ item }}"
+        dest: "/tmp/{{ item | basename }}"
+        validate_certs: false
+        mode: "0644"
+      loop: "{{ zypper.rpm_urls }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      when: zypper.rpm_urls | length > 0
+      tags:
+        - packages
+
+    - name: Install RPMs from personal URLs
+      community.general.zypper:
+        name: "{{ zypper.rpm_urls | map('basename') | map('regex_replace', '^', '/tmp/') | list }}"
+        state: present
+        disable_gpg_check: true
+      when: zypper.rpm_urls | length > 0
+      tags:
+        - packages
 
     - name: Install favorite packages
       community.general.zypper:
@@ -570,7 +703,7 @@
       become_user: "{{ ansible_user }}"
       environment:
         HOME: "/home/{{ ansible_user }}"
-      loop: "{{ gh_extensions }}"
+      loop: "{{ gh.extensions }}"
       loop_control:
         label: "{{ item.repo }}"
       tags:
@@ -622,6 +755,94 @@
         - gh
         - gh_extensions
 
+    # ── glab CLI: configuration for GitLab instances ──────────────────────────
+    # After this block the user can SSH into the machine and use glab immediately
+    # against any GitLab instance configured in vars/glab.yml or overridden in
+    # .secret/personal.yml.
+    #
+    # Authentication strategy: template deployment
+    #   - The full config.yml (including per-host tokens) is rendered from a
+    #     Jinja2 template.  Tokens are sourced from .secret/personal.yml under
+    #     glab.hosts.<hostname>.token.
+    #   - glab stores auth in plain-text config.yml by default (no keyring),
+    #     so no --insecure-storage flag is needed.
+    #   - Hosts with empty tokens are included but won't authenticate until
+    #     a token is provided.
+    #   - no_log: true on the config template prevents tokens from appearing
+    #     in Ansible output.
+
+    - name: Ensure ~/.config/glab-cli directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/glab-cli"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      tags:
+        - glab
+
+    - name: Deploy glab config.yml
+      ansible.builtin.template:
+        src: templates/glab_config.yml.j2
+        dest: "/home/{{ ansible_user }}/.config/glab-cli/config.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      no_log: true
+      tags:
+        - glab
+
+    - name: Deploy glab aliases.yml
+      ansible.builtin.template:
+        src: templates/glab_aliases.yml.j2
+        dest: "/home/{{ ansible_user }}/.config/glab-cli/aliases.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags:
+        - glab
+
+    # ── glab credential helper: git ↔ GitLab HTTPS auth ─────────────────────
+    # Unlike gh, glab has no `auth setup-git` subcommand.  Non-interactive
+    # login (`--token`) skips credential helper wiring entirely.  We replicate
+    # the effect manually: for each configured GitLab host, write a
+    # [credential "https://<host>"] block into ~/.gitconfig with the
+    # chain-reset blank `helper =` followed by `!/usr/bin/glab auth
+    # git-credential`.  This mirrors what `gh auth setup-git` does for GitHub.
+    #
+    # glab reads the token from its own config (~/.config/glab-cli/config.yml)
+    # at runtime, so the credential helper points to the binary, not a token.
+    # Token rotation only requires updating the glab config — no gitconfig
+    # changes needed.
+
+    - name: Wire glab as git credential helper for GitLab hosts  # noqa: command-instead-of-shell
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          git config --global --unset-all 'credential.https://{{ hostname }}.helper' 2>/dev/null || true
+          git config --global 'credential.https://{{ hostname }}.helper' ''
+          git config --global --add 'credential.https://{{ hostname }}.helper' \
+            '!/usr/bin/glab auth git-credential'
+        executable: /bin/bash
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+      loop: "{{ glab.hosts.keys() | list }}"
+      loop_control:
+        loop_var: hostname
+      changed_when: false
+      tags:
+        - glab
+        - git_config
+
+    - name: Remove stale ~/.netrc (replaced by glab credential helper)
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.netrc"
+        state: absent
+      tags:
+        - glab
+
     # ── git global configuration ───────────────────────────────────────────────
     # Managed via community.general.git_config (idempotent: only writes when
     # the current value differs from the desired value).
@@ -634,10 +855,10 @@
       become: true
       become_user: "{{ ansible_user }}"
       loop:
-        - {name: user.name, value: "{{ git_user_name }}"}
-        - {name: user.email, value: "{{ git_user_email }}"}
-        - {name: core.editor, value: "{{ git_editor }}"}
-        - {name: init.defaultBranch, value: "{{ git_default_branch }}"}
+        - {name: user.name, value: "{{ git.user_name }}"}
+        - {name: user.email, value: "{{ git.user_email }}"}
+        - {name: core.editor, value: "{{ git.editor }}"}
+        - {name: init.defaultBranch, value: "{{ git.default_branch }}"}
         # - { name: pull.rebase, value: "true" }
         # - { name: push.autoSetupRemote, value: "true" }
         # - { name: fetch.prune, value: "true" }
@@ -651,7 +872,7 @@
         - git_config
 
     # ── GPG commit signing (optional) ─────────────────────────────────────────
-    # Enabled when git_signing_key is non-empty (set in .secret/personal.yml).
+    # Enabled when git.signing_key is non-empty (set in .secret/personal.yml).
     # The private key is sourced from .secret/gpg_private_key.asc (gitignored).
     # It is copied to a temp path on the VM, imported, then immediately deleted.
     # block/always guarantees the temp file is removed even if import fails.
@@ -666,7 +887,7 @@
       register: gpg_key_file
       delegate_to: localhost
       become: false
-      when: git_signing_key != ""
+      when: git.signing_key != ""
       tags:
         - gpg
         - git_config
@@ -678,13 +899,13 @@
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: "0700"
-      when: git_signing_key != ""
+      when: git.signing_key != ""
       tags:
         - gpg
         - git_config
 
     - name: Import GPG private key and set ultimate trust
-      when: git_signing_key != "" and (gpg_key_file is defined) and gpg_key_file.stat.exists
+      when: git.signing_key != "" and (gpg_key_file is defined) and gpg_key_file.stat.exists
       tags:
         - gpg
         - git_config
@@ -713,7 +934,7 @@
           ansible.builtin.shell:
             cmd: |
               set -o pipefail
-              gpg --with-colons --fingerprint '{{ git_signing_key }}' 2>/dev/null \
+              gpg --with-colons --fingerprint '{{ git.signing_key }}' 2>/dev/null \
                 | awk -F: '/^fpr/{print $10; exit}' \
                 | sed 's/$/:6:/' \
                 | gpg --batch --import-ownertrust
@@ -740,7 +961,7 @@
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: "0600"
-      when: git_signing_key != ""
+      when: git.signing_key != ""
       tags:
         - gpg
         - git_config
@@ -753,7 +974,7 @@
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: "0600"
-      when: git_signing_key != ""
+      when: git.signing_key != ""
       tags:
         - gpg
         - git_config
@@ -766,9 +987,9 @@
       become: true
       become_user: "{{ ansible_user }}"
       loop:
-        - {name: user.signingkey, value: "{{ git_signing_key }}"}
-        - {name: commit.gpgsign, value: "{{ git_gpg_sign }}"}
-      when: git_signing_key != ""
+        - {name: user.signingkey, value: "{{ git.signing_key }}"}
+        - {name: commit.gpgsign, value: "{{ git.gpg_sign }}"}
+      when: git.signing_key != ""
       loop_control:
         label: "{{ item.name }}"
       tags:
@@ -826,10 +1047,38 @@
       tags:
         - tmux
 
+    # ── Cloud CLIs ──────────────────────────────────────────────────────────────
+    # gcloud: Google Cloud SDK installed via the official thin installer from
+    #   https://sdk.cloud.google.com (same method as openqa's gcloud_install()).
+    #   The zypper repo is broken on Tumbleweed (Python 2 dependency).
+    #   Installs to ~/google-cloud-sdk/; PATH and completions are sourced via
+    #   the zshrc template (path.zsh.inc + completion.zsh.inc).
+    #   Auth is NOT automated — run `gcloud auth login` interactively after
+    #   provision.
+    #
+    # Future: aws-cli, az-cli will follow the same pattern under this tag.
+
+    - name: Install Google Cloud SDK via official installer  # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          curl -fsSL https://sdk.cloud.google.com | bash
+        executable: /bin/bash
+        creates: "/home/{{ ansible_user }}/google-cloud-sdk"
+      become: true
+      become_user: "{{ ansible_user }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+        CLOUDSDK_CORE_DISABLE_PROMPTS: "1"
+        CLOUDSDK_PYTHON: "/usr/bin/python3.13"
+      tags:
+        - cloud
+
     # ── AI / Code-Assist tools ─────────────────────────────────────────────────
     # gemini-cli: installed via zypper (openSUSE community package); settings.json
     #   is deployed from templates/gemini_settings.json.j2.  The auth type is driven
-    #   by gemini_auth_type (vars/gemini.yml; override in .secret/personal.yml).
+    #   by gemini.auth_type (vars/code_assist.yml; override in .secret/personal.yml).
     # opencode + copilot: GitHub release binaries using the same idempotent version-
     #   sentinel pattern as the Helix LSP binaries above.
     # claude-code: official curl | bash installer (Anthropic's recommended method).
@@ -855,9 +1104,9 @@
     # settings.json is deployed from a Jinja2 template so that auth.selectedType
     # is configurable without editing tracked files.
     # Default: oauth-personal (interactive browser flow).
-    # Override gemini_auth_type in .secret/personal.yml for headless environments.
+    # Override gemini.auth_type in .secret/personal.yml for headless environments.
     #
-    # .env (optional): if .secret/gemini_env exists on the controller it is
+    # .env (optional): if gemini.env is defined in .secret/personal.yml, it is
     # deployed as ~/.gemini/.env (mode 0600).  gemini-cli reads this file
     # automatically and injects the listed variables into its environment —
     # use it for GEMINI_API_KEY, GOOGLE_CLOUD_PROJECT, etc.
@@ -889,38 +1138,37 @@
       tags:
         - code_assist
 
-    - name: Check for gemini-cli .env secret on controller
-      ansible.builtin.stat:
-        path: "{{ playbook_dir }}/.secret/gemini_env"
-      register: gemini_env_file
-      delegate_to: localhost
-      become: false
-      tags:
-        - code_assist
-
-    - name: Deploy gemini-cli .env if secret is present
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/.secret/gemini_env"
+    - name: Deploy gemini-cli .env
+      ansible.builtin.template:
+        src: templates/gemini_env.j2
         dest: "/home/{{ ansible_user }}/.gemini/.env"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
         mode: '0600'
-      when: gemini_env_file.stat.exists
+      when: gemini.env | default({}) | length > 0
       no_log: true
+      tags:
+        - code_assist
+
+    - name: Remove gemini-cli .env when no env variables are defined
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.gemini/.env"
+        state: absent
+      when: gemini.env | default({}) | length == 0
       tags:
         - code_assist
 
     # ── gemini-cli extensions ─────────────────────────────────────────────────
     # Installed non-interactively with --consent --skip-settings.
-    # List driven by gemini_extensions in vars/gemini.yml.
+    # List driven by gemini.extensions in vars/code_assist.yml.
     # Idempotent: skips extensions whose directory already exists.
-    # To upgrade: bump the ref in vars/gemini.yml, remove the extension dir
+    # To upgrade: bump the ref in vars/code_assist.yml, remove the extension dir
     # on the VM, and re-run with --tags code_assist.
 
     - name: Check installed gemini-cli extensions
       ansible.builtin.stat:
         path: "/home/{{ ansible_user }}/.gemini/extensions/{{ item.name }}/gemini-extension.json"
-      loop: "{{ gemini_extensions }}"
+      loop: "{{ gemini.extensions }}"
       loop_control:
         label: "{{ item.name }}"
       register: gemini_ext_check
@@ -1066,6 +1314,26 @@
     # Re-running is safe: claude-code auto-updates itself after first install.
     # The `creates:` guard skips the installer if the binary is already present.
 
+    - name: Ensure ~/.claude directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.claude"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+      tags:
+        - code_assist
+
+    - name: Deploy claude-code settings.json
+      ansible.builtin.template:
+        src: templates/claude_settings.json.j2
+        dest: "/home/{{ ansible_user }}/.claude/settings.json"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      tags:
+        - code_assist
+
     - name: Install claude-code via official installer  # noqa: command-instead-of-module
       ansible.builtin.shell:
         cmd: |
@@ -1187,3 +1455,216 @@
       when: pi_needs_install
       tags:
         - code_assist
+
+    # ── Encrypted /home (LUKS2 on /dev/vdb) ─────────────────────────────────
+    # See ideas/DISK_CRYPT.md for full rationale, rollout plan, and gotchas.
+    #
+    # Two tags keep the interactive init step isolated from routine runs:
+    #   encrypted_home      — always-safe, idempotent; run any time.
+    #   encrypted_home_init — one-time LUKS format; prompts for passphrase.
+    #                         Guarded by cryptsetup isLuks so re-running is safe.
+
+    - name: Install cryptsetup
+      community.general.zypper:
+        name: cryptsetup
+        state: present
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Drop sshd AuthorizedKeysFile override (moves key lookup out of /home)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-authorized-keys.conf
+        content: |
+          AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u .ssh/authorized_keys
+        mode: '0644'
+      notify: Restart sshd
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Ensure system-wide authorized_keys directory exists
+      ansible.builtin.file:
+        path: /etc/ssh/authorized_keys.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Seed authorized_keys outside /home for {{ ansible_user }}
+      ansible.builtin.copy:
+        remote_src: true
+        src: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        dest: "/etc/ssh/authorized_keys.d/{{ ansible_user }}"
+        owner: root
+        group: root
+        mode: '0644'
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    # ── First-time LUKS format and /home/devenv migration ────────────────────
+
+    - name: Detect whether /dev/vdb is already LUKS-formatted
+      ansible.builtin.command: cryptsetup isLuks /dev/vdb
+      register: vdb_is_luks
+      failed_when: false
+      changed_when: false
+      tags:
+        - encrypted_home_init
+
+    - name: Prompt for LUKS passphrase (skipped if /dev/vdb already formatted)
+      ansible.builtin.pause:
+        prompt: "LUKS passphrase for /home (input hidden)"
+        echo: false
+      register: luks_passphrase_input
+      when: vdb_is_luks.rc != 0
+      no_log: true
+      tags:
+        - encrypted_home_init
+
+    - name: Confirm LUKS passphrase
+      ansible.builtin.pause:
+        prompt: "Confirm passphrase"
+        echo: false
+      register: luks_passphrase_confirm
+      when: vdb_is_luks.rc != 0
+      no_log: true
+      tags:
+        - encrypted_home_init
+
+    - name: Assert passphrases match
+      ansible.builtin.assert:
+        that: luks_passphrase_input.user_input == luks_passphrase_confirm.user_input
+        fail_msg: "Passphrases do not match — re-run with --tags encrypted_home_init"
+      when: vdb_is_luks.rc != 0
+      no_log: true
+      tags:
+        - encrypted_home_init
+
+    - name: Format /dev/vdb as LUKS2 and migrate /home/{{ ansible_user }}
+      when: vdb_is_luks.rc != 0
+      tags:
+        - encrypted_home_init
+      block:
+        - name: LuksFormat /dev/vdb with LUKS2
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              printf '%s' "{{ luks_passphrase_input.user_input }}" \
+                | cryptsetup luksFormat --type luks2 --batch-mode \
+                    --key-file=- /dev/vdb
+            executable: /bin/bash
+          no_log: true
+
+        - name: Read LUKS UUID for crypttab
+          ansible.builtin.command: cryptsetup luksUUID /dev/vdb
+          register: vdb_luks_uuid_cmd
+          changed_when: false
+
+        - name: Open the freshly formatted LUKS device
+          ansible.builtin.shell:
+            cmd: |
+              printf '%s' "{{ luks_passphrase_input.user_input }}" \
+                | cryptsetup luksOpen --key-file=- /dev/vdb home_crypt
+            executable: /bin/bash
+          no_log: true
+
+        - name: Create ext4 filesystem inside LUKS container
+          community.general.filesystem:
+            fstype: ext4
+            dev: /dev/mapper/home_crypt
+
+        - name: Ensure /mnt/new_home staging mount point exists
+          ansible.builtin.file:
+            path: /mnt/new_home
+            state: directory
+            mode: '0755'
+
+        - name: Mount encrypted volume on staging path (not on /home)
+          ansible.posix.mount:
+            path: /mnt/new_home
+            src: /dev/mapper/home_crypt
+            fstype: ext4
+            state: ephemeral
+
+        - name: Ensure destination directory exists inside encrypted volume
+          ansible.builtin.file:
+            path: "/mnt/new_home/{{ ansible_user }}"
+            state: directory
+            mode: '0700'
+
+        - name: Copy home directory into the encrypted volume for {{ ansible_user }}
+          ansible.builtin.shell:
+            cmd: |
+              cp -a /home/{{ ansible_user }}/. /mnt/new_home/{{ ansible_user }}/
+            executable: /bin/bash
+          changed_when: true
+
+        - name: Fix ownership inside the staged directory
+          ansible.builtin.file:
+            path: "/mnt/new_home/{{ ansible_user }}"
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+            recurse: true
+
+        - name: Unmount the staging path
+          ansible.builtin.command: umount /mnt/new_home
+          changed_when: true
+
+        - name: Close the LUKS device until next reboot
+          ansible.builtin.command: cryptsetup close home_crypt
+
+        - name: Persist LUKS UUID for crypttab/fstab tasks
+          ansible.builtin.set_fact:
+            vdb_luks_uuid: "{{ vdb_luks_uuid_cmd.stdout | trim }}"
+
+    # ── Persistent crypttab + fstab (both tags) ──────────────────────────────
+
+    - name: Recover LUKS UUID from existing device (routine re-runs)
+      ansible.builtin.command: cryptsetup luksUUID /dev/vdb
+      register: vdb_luks_uuid_recover
+      changed_when: false
+      failed_when: false
+      when: vdb_luks_uuid is not defined
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Set vdb_luks_uuid from recovered value
+      ansible.builtin.set_fact:
+        vdb_luks_uuid: "{{ vdb_luks_uuid_recover.stdout | trim }}"
+      when: vdb_luks_uuid is not defined and vdb_luks_uuid_recover.rc == 0
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Ensure /etc/crypttab entry for home_crypt (manual unlock at boot)
+      ansible.builtin.lineinfile:
+        path: /etc/crypttab
+        line: "home_crypt UUID={{ vdb_luks_uuid }} none luks"
+        create: true
+        mode: '0600'
+      when: vdb_luks_uuid is defined
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+    - name: Ensure /etc/fstab entry for /home (nofail — SSH works if unlock skipped)
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/dev/mapper/home_crypt /home ext4 defaults,nofail 0 2"
+        create: false
+      when: vdb_luks_uuid is defined
+      tags:
+        - encrypted_home
+        - encrypted_home_init
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: sshd
+        state: restarted

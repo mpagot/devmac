@@ -63,7 +63,7 @@ _git_default_branch() {
 ghsync() {
   local branch=$(_git_default_branch)
   git checkout "$branch" && \
-    gh repo sync {{ gh_username }}/$(basename $(git rev-parse --show-toplevel)) -b "$branch" && \
+    gh repo sync {{ gh.username }}/$(basename $(git rev-parse --show-toplevel)) -b "$branch" && \
     git pull
 }
 
@@ -105,7 +105,7 @@ gh_pr() {
   echo "MYGH_UP : ${MYGH_UP}"
   local MYGH_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
   echo "MYGH_BRANCH : ${MYGH_BRANCH}"
-  local MYGH_PR="$(GH_PAGER= gh pr -R ${MYGH_UP} --json 'number' -q '.[0].number' list -A {{ gh_username }} -H ${MYGH_BRANCH} -s all)"
+  local MYGH_PR="$(GH_PAGER= gh pr -R ${MYGH_UP} --json 'number' -q '.[0].number' list -A {{ gh.username }} -H ${MYGH_BRANCH} -s all)"
   echo "This is PR: ${MYGH_PR}"
   [[ -z "${MYGH_PR}" ]] && echo "No PR!!!"
   GH_PAGER= gh pr -R ${MYGH_UP} view $1 ${MYGH_PR}
@@ -141,6 +141,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
 # claude-code — Anthropic Claude Code AI assistant (installed via official curl | bash)
 export PATH="$HOME/.claude/local:$PATH"
+
+# ── Google Cloud SDK ───────────────────────────────────────────────────────
+# Installed via curl https://sdk.cloud.google.com | bash (not zypper — broken on TW).
+# path.zsh.inc adds the SDK bin directories; completion.zsh.inc wires up gcloud tab-completion.
+if [ -f "$HOME/google-cloud-sdk/path.zsh.inc" ]; then . "$HOME/google-cloud-sdk/path.zsh.inc"; fi
+if [ -f "$HOME/google-cloud-sdk/completion.zsh.inc" ]; then . "$HOME/google-cloud-sdk/completion.zsh.inc"; fi
 
 # ── Tool initialisation (ORDER MATTERS: fzf → zoxide → atuin → starship) ──────
 
